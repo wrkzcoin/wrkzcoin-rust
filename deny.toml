@@ -1,0 +1,75 @@
+# cargo-deny: advisories, licences, duplicate versions and where crates come
+# from, over the whole dependency tree. Run in CI (.github/workflows/ci.yml,
+# job `deny`) and by hand with:
+#
+#     cargo install cargo-deny --locked
+#     cargo deny --workspace --all-features check
+#
+# `--all-features` matters: the RocksDB engine and both zstd paths are optional
+# and would otherwise never be looked at.
+#
+# The allow list below was written from this tree's own lock file, so a new
+# entry means a dependency introduced a licence nothing here had before. That
+# is a decision, not a formality — add the line deliberately.
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+# A yanked crate is one the author withdrew, often for a soundness or security
+# reason. This is a coin; that is a stop, not a note.
+yanked = "deny"
+# Advisories accepted with a reason. Empty, and it should stay that way; an
+# entry here is a known-vulnerable dependency someone decided to keep.
+ignore = []
+
+[licenses]
+version = 2
+# Permissive only. Everything here is satisfied by the tree as it stands.
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.9
+
+# The workspace's own crates are skipped: none is published (`publish = false`
+# in Cargo.toml), and the list above is for what the tree pulls in. They would
+# not all pass it: `wrkz-pow-ref` carries the C++ repository's C code under its
+# own licences, GPL-3.0 among them (crates/wrkz-pow-ref/c/LICENSE, and that
+# crate's `license` field).
+[licenses.private]
+ignore = true
+
+[bans]
+# Two versions of the same crate is usually a transitive dependency lagging.
+# A warning rather than an error: it is worth seeing and rarely worth blocking.
+multiple-versions = "warn"
+# A `*` version requirement makes the build unreproducible by definition.
+wildcards = "deny"
+# Nothing in this tree should reach for a heavyweight async runtime or a web
+# framework: the daemon, the wallet API and the service all speak HTTP/1.1
+# through `wrkz_rpc::http` on a thread pool, deliberately (spec/09).
+deny = [
+    { name = "tokio" },
+    { name = "async-std" },
+    { name = "actix-web" },
+    { name = "axum" },
+    { name = "hyper" },
+    { name = "warp" },
+    { name = "rocket" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

@@ -1,0 +1,23 @@
+[package]
+name = "wrkz-mempool"
+description = "WrkzCoin transaction pool and block templates: Core::addTransactionToPool / TransactionPool / TransactionPoolCleaner, and Core::getBlockTemplate + fillBlockTemplate + Currency::constructMinerTx with the reserved_offset search (spec/06 'Mempool policy', spec/07 'Block templates', spec/09)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+wrkz-pow = { workspace = true }
+wrkz-primitives = { workspace = true }
+wrkz-storage = { workspace = true }
+wrkz-chain = { workspace = true }
+hex = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+ureq = { workspace = true, features = ["json"] }
+
+[lints]
+workspace = true

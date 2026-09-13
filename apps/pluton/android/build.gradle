@@ -1,0 +1,7 @@
+// Copyright (c) 2026, The WrkzCoin developers
+//
+// Please see the included LICENSE file for more information
+
+plugins {
+    id 'com.android.application' version '8.7.3' apply false
+}

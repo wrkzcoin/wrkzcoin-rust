@@ -1,0 +1,166 @@
+## inputs
+I0 empty = 
+I1 'abc' = 616263
+I2 44-byte ascii = 5468697320697320612074657374205468697320697320612074657374205468697320697320612074657374
+I3 bytes 0x00..0x4b (76 bytes) = 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b
+I4 bytes 0x00..0xc7 (200 bytes) = 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7
+
+## cn_fast_hash (keccak-256, 0x01 padding)
+I0 empty -> c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470
+I1 'abc' -> 4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45
+I2 44-byte ascii -> af6fe96f8cb409bdd2a61fb837e346f1a28007b0f078a8d68bc1224b6fcfcc3c
+I3 bytes 0x00..0x4b (76 bytes) -> 73f7c43d64b877a25614f8b8dfbd31ed4f0f22b97e0236d2a2070774434ca3a1
+I4 bytes 0x00..0xc7 (200 bytes) -> bfb0aa97863e797943cf7c33bb7e880bb4543f3d2703c0923c6901c2af57b890
+
+## cn_slow_hash_v0 (block major v1..v3) [light=0 variant=0 2MiB scratch 2^20 iter mask 0x1FFFF0]
+I0 empty -> eb14e8a833fac6fe9a43b57b336789c46ffe93f2868452240720607b14387e11
+I1 'abc' -> 22b72dd4751523b2fa3a46a90dc146dae83d033f0e369ab71a44563f2f18e209
+I2 44-byte ascii -> 74d15836e33d14e164c2494648996eb5ed71a3ec2c72c2be225eda1b8a857aba
+I3 bytes 0x00..0x4b (76 bytes) -> f6cb9c11f00543bab31ad730687d5df828118e8e5ed678ff73ae483c23785386
+I4 bytes 0x00..0xc7 (200 bytes) -> 1adf947fecb24cb051de5e21d20becd0a00d16943b92312ed5f11a0bcc2bcee5
+
+## cn_lite_slow_hash_v1 (block major v4) [light=1 variant=1 1MiB scratch 2^19 iter mask 0xFFFF0] (input >= 43 bytes only)
+I2 44-byte ascii -> fca17d4437709b4a3bd71ef3ed21b417ca93dc8679ce81dfd3cbdd0a22d758ba
+I3 bytes 0x00..0x4b (76 bytes) -> f3887e3c44d015abf2e3a431991ba09eb2941e5671ef34a731b6abff59465dba
+I4 bytes 0x00..0xc7 (200 bytes) -> fee0656b2bc1a08ec20dd594946f4103ff229f74201e8fd44f45c00774cf1592
+
+## cn_turtle_lite_slow_hash_v2 (block major v5) [light=1 variant=2 256KiB scratch 2^17 iter mask 0x1FFF0]
+I0 empty -> 16cba4f89786b8aa785a4085f529f757296402aca4edbaefc1470bc691071ed9
+I1 'abc' -> 9cbd76fa436fd9a1082e270002d0d10c3d4c229c5cde987e2f71e38d4a9cdead
+I2 44-byte ascii -> 305f66febbf3600edabb60f7f1c9b90a3ae85a31d476ca381d5618a6c62760d7
+I3 bytes 0x00..0x4b (76 bytes) -> 645a537295c69620af9f203279efd972fbccef508b048e5877039d0f18a6e4ff
+I4 bytes 0x00..0xc7 (200 bytes) -> 1d6c9b9668266f4694b9b49a69776ca321da2078bab9ac09dade8c5078df8e86
+
+## chukwa_slow_hash (block major v6) [argon2id t=4 m=256KiB p=1 salt=first 16 bytes of input, 32-byte tag] (input >= 16 bytes only)
+I2 44-byte ascii -> 2a37ad80dc974ff1fab8a670baed8bbd56a662919b8c80f21b90595150394bb8
+I3 bytes 0x00..0x4b (76 bytes) -> 90f35c9d1e694fde56ee9e2e95eda30000a6d65bde9fa1d304f22602e44fdd27
+I4 bytes 0x00..0xc7 (200 bytes) -> 9890115d629b57265a78a97b298bb3091f87eec1abe7e8c2da5ad897bee875c2
+
+## cn_upx (block major v7, tx PoW) [light=2 variant=2 128KiB scratch 2^15 iter mask 0x1FFF0]
+I0 empty -> ba2a6fec59d3316c1c33d04189996d4aa56bd5c5eefe7a9cae742a244b906d2d
+I1 'abc' -> f8291063f631e1f0b2b282bb03e61f29624cc316dbf6977389eed4d818d6c67c
+I2 44-byte ascii -> 9553131ca973561f010302b89ff59926502378c1c7ee420df5fc60def9c38729
+I3 bytes 0x00..0x4b (76 bytes) -> ed1a7234dfa8a4b614193c8ceedbec80202c6921b83693cc7b4f6bc11d11cc43
+I4 bytes 0x00..0xc7 (200 bytes) -> f9bfe6929b7b7a8edeabc7a8f44135c86ed18289685ea58f47259fba42f13438
+
+## tree_hash (leaves: leaf[i] = cn_fast_hash(single byte i))
+leaf[0] = bc36789e7a1e281436464229828f817d6612f7b477d66591ff96a9e064bcc98a
+leaf[1] = 5fe7f977e71dba2ea1a68e21057beebb9be2ac30c6410aa38d4f3fbe41dcffd2
+leaf[2] = f2ee15ea639b73fa3db9b34a245bdfa015c260c598b211bf05a1ecc4b3e3b4f2
+leaf[3] = 69c322e3248a5dfc29d73c5b0553b0185a35cd5bb6386747517ef7e53b15e287
+leaf[4] = f343681465b9efe82c933c3e8748c70cb8aa06539c361de20f72eac04e766393
+leaf[5] = dbb8d0f4c497851a5043c6363657698cb1387682cac2f786c731f8936109d795
+leaf[6] = d0591206d9e81e07f4defc5327957173572bcd1bca7838caa7be39b0c12b1873
+leaf[7] = ee2a4bc7db81da2b7164e56b3649b1e2a09c58c455b15dabddd9146c7582cebc
+leaf[8] = d33e25809fcaa2b6900567812852539da8559dc8b76a7ce3fc5ddd77e8d19a69
+tree_hash(count=1) = bc36789e7a1e281436464229828f817d6612f7b477d66591ff96a9e064bcc98a
+tree_hash(count=2) = 57d772147cdf27f5f67d679f0f3a513f8b87622ce598a3cf0b048ab178ddfc6e
+tree_hash(count=3) = 31ea648480acca9d46c5cfd2fd5ecf576ce7a797bdd582869c38deeacf6d17d4
+tree_hash(count=4) = dd5115b5dcca3db0bffa31064a0d21f21362cd02e1263e47d69e38bbeec1d359
+tree_hash(count=5) = 3b85b9b4e7171846e3dd41d242f99cdc136467ff276a272d5d8f960b2c447d67
+tree_hash(count=7) = 6db3924fa166ddef0003d700474beb10c7cd9cc90b882af3b1bbb98aeb557a5f
+tree_hash(count=8) = 791521f02a712f28265f5200914f9772b133bc2692260f8c8f426e176b1713ed
+tree_hash(count=9) = 6a31a9bc64f694b411012bf9293fbf312a418c49565fcee0b0125c5c768c77be
+
+## keys
+seed (32 x 0x11) = 1111111111111111111111111111111111111111111111111111111111111111
+spend_secret = sc_reduce32(seed) = 243d1bb4f6adfeb83a74196e321732fc10111111111111111111111111111101
+spend_public = 857eed804ff087b97f87848f6493e87257a8c5203cb9f422f6e7a7d8a4d299f3
+keccak(spend_secret) = 5146398cf960e8705f27bd61413037857d6eb51457125bb9c90339b752f23720
+view_secret = sc_reduce32(keccak(spend_secret)) = 779e4dd2c49ac3c0b2edcd1b843c795b7d6eb51457125bb9c90339b752f23700
+view_public = 0489cb98c7108372eaff2cdeddc5e76166b017a847537bf8499d61465395e942
+address (prefix 999730) = WrkzaiGnz9chESkaqwevEPRjtnU46TRBRY6z3EZ7fXymcE6dTbHDSWJ3mCgQ2Vdzxca6v5FEwodPCExuJuAmtVj86gVkpDFBue (len 98)
+varint(999730) = b2823d
+address checksum = first 4 bytes of keccak(varint(prefix)||spend||view) = f8e92e65
+decode_addr ok=1 prefix=999730 payload=857eed804ff087b97f87848f6493e87257a8c5203cb9f422f6e7a7d8a4d299f30489cb98c7108372eaff2cdeddc5e76166b017a847537bf8499d61465395e942
+integrated address (pid 0102030405060708) = WrkzKmKSCDz21UVh4DEcHUhESkaqwevEPRjtnU46TRBRY6z3EZ7fXymcE6dTbHDSWJ3mCgQ2Vdzxca6v5FEwodPCExuJuAmtVj86gVknoDapN (len 109)
+
+## mnemonic (25 words, electrum-style, crc32 checksum word)
+mnemonic(spend_secret) = eluded ceiling theatrics orange mixture epoxy viewpoint oatmeal aggravate tell different dating intended richly slower inundate ridges slug inundate ridges slug were rotate rudely viewpoint
+round trip error=0 key=243d1bb4f6adfeb83a74196e321732fc10111111111111111111111111111101
+
+## deterministic subwallets (generate_deterministic_subwallet_keys)
+index 1: secret=2c7d88e6b43bb83f7215ecc744e73589d8d1a841e7ab8f26672c5490c1aa2b0a public=2c1c4f98aed340fd311ab7d1fe51a1c2e879fde0eb74695e3d10b33d62cc5086
+index 2: secret=b5f66b6627238ac68d776a1319f785243feb071a3a11cf611c6bc69e0b40a20e public=560f3e3b47ffd155f6a42b9764464b751f63f2269dc22e775dc67c543097c456
+index 5: secret=a4ddafa869de6372de50b571f2d8aa6f99de80d2da2ef7bf0b84fcc878026c08 public=4d4dffbb254aba5cbeed60ac4bab40ae295cc806517f5047ed0c8bb6110879bd
+
+## output derivation (sender tx key -> receiver)
+tx_secret = sc_reduce32(32 x 0x22) = 487a3668ed5bfd7175e832dc642e64f821222222222222222222222222222202
+tx_public = 512e1a2060d978a11a9ce65bbb6b98dcf3300b762c520b13fe2e658b583593bf
+derivation = 8 * tx_secret * view_public = 5d450058695ab466965468876364cb788bc4656123bc40479246d23d24b2c9dd
+derivation (receiver side, 8 * view_secret * tx_public) = 5d450058695ab466965468876364cb788bc4656123bc40479246d23d24b2c9dd
+output index 0:
+  derivation_to_scalar = cc75e88978b27e2d1f864cd797ed65e20e2e44f10a99018c6f2e3c676973b40c
+  one_time_public (P = Hs(D||varint(i))*G + spend_public) = 22c90af32cfded17237a447122de92e736b59313f635bf43f69bacfad3756723
+  one_time_secret (x = Hs(D||varint(i)) + spend_secret) = f0b2033e6f607de659fa6545ca0498de1f3f55021caa129d803f4d787a84c50d
+  x*G == P : 1
+  key_image (x * Hp(P)) = 4b8483b5c810b23cb58ec80547f3fa43fd587e5c5f53f29e61ee5e949df7e7f4
+  underive -> spend_public : 1
+output index 1:
+  derivation_to_scalar = 927dbd8ac4e248e9fadb9cc89b3e551bd0fa4014174ed75111b6410e7010e00a
+  one_time_public (P = Hs(D||varint(i))*G + spend_public) = 7bff8bd6445e8ebb0772d0e19e5c6a533b45a2594a58c12797d5a20e607f55c4
+  one_time_secret (x = Hs(D||varint(i)) + spend_secret) = b6bad83ebb9047a23550b636ce558717e10b5225285fe86222c7521f8121f10b
+  x*G == P : 1
+  key_image (x * Hp(P)) = 5ce813e86628317e0638bbd3513a1db4e5c826f4b23da46d0395445fa8a97d54
+  underive -> spend_public : 1
+output index 300:
+  derivation_to_scalar = 8ea5f31a284ceb1557bad04067a062af3942bbaedf6b0ed230484ff78f24330e
+  one_time_public (P = Hs(D||varint(i))*G + spend_public) = 0feba64cf7934aed7a41dbb702f9c87b3f9ad723e37d93b419659f270eec091e
+  one_time_secret (x = Hs(D||varint(i)) + spend_secret) = b2e20ecf1efae9ce912eeaae99b794ab4a53ccbff07c1fe341596008a135440f
+  x*G == P : 1
+  key_image (x * Hp(P)) = 2091d3c30087b73a7f77e65813111f8b52777eb93949c411f6fd6656b735ba2b
+  underive -> spend_public : 1
+
+## hash_to_scalar / hash_to_ec
+hash_to_scalar('abc') = sc_reduce32(keccak('abc')) = 9ab38d0681b95fef6d619d1cace05a14c0d1e6e33a64a036ec44f58fa12d6c05
+hash_to_ec('abc') = 8 * fromfe(keccak('abc')) = 5697a435347c8d6f988ba157c69e7825c1ede8abf00ceb74c0c45bea8d1d85ba
+Hp(spend_public) = 17578ae6fcb167f76bcdbeece316b383e13a164e2daca2ed2397c2aebd22b007
+
+## encrypted short payment id
+keystream = keccak(derivation || 0x8d) = 520bf37ff39f9f08c845ebe51eef6d95d022a0a4af92a01b90942cf0007148d6
+encrypt(0102030405060708) = 5309f07bf6999800
+
+## varint
+varint(0) = 00
+varint(1) = 01
+varint(127) = 7f
+varint(128) = 8001
+varint(300) = ac02
+varint(999730) = b2823d
+varint(4294967296) = 8080808010
+varint(18446744073709551615) = ffffffffffffffffff01
+
+## base58 (CryptoNote block variant, 8-byte blocks -> 11 chars)
+encode(00000000) = 111111
+encode(61) = 2g
+encode(68656c6c6f) = Cn8eVZg
+encode(68656c6c6f20776f726c6421) = JTmsyNwG6XQ3vdzkp
+encode(00000001) = 111112
+
+## check_hash(hash, difficulty)
+check_hash(keccak('abc'), 1) = 1
+check_hash(keccak('abc'), 1000) = 0
+check_hash(keccak('abc'), 1048576) = 0
+check_hash(keccak('abc'), 1099511627776) = 0
+check_hash(keccak('abc'), 1152921504606846976) = 0
+check_hash(0100..00, 2^63) = 1
+check_hash(ff..ff, 1) = 1
+check_hash(ff..ff, 2) = 0
+
+## genesis block
+genesis coinbase tx hash = c1a9de04946d5fe3805fa49ac6ba8ad9c07fa2f3b8c5d2cfea407d7e7a193e95
+genesis hashing blob = 010000000000000000000000000000000000000000000000000000000000000000000046000000c1a9de04946d5fe3805fa49ac6ba8ad9c07fa2f3b8c5d2cfea407d7e7a193e9501
+keccak(blob) WITHOUT the varint length prefix (NOT the block id; the block id is keccak(varint(72) || blob) = 877e55b4e902b9bf4c9e0a7c16440f449339d56679c49d62261ae5c92596a6ce, see blocks.txt) = c0cbb9699cfe07ebe6b64bcbd7d81a76926b52e76883c0eecfd5b26ceeb72738
+genesis pow hash = cn_slow_hash_v0(blob) = 3cb9405522d3c32293ce88d1c7700f2f27b86fbb3a11663be7f244199dbb5423
+
+## chacha8 (legacy WalletGreen container)
+chacha8(key=00..1f, iv=00..07, 'hello wallet') = 2884c68673a44ccb44ddebc3
+generate_chacha8_key('password') = cn_slow_hash_v0('password')[0..32] = d525a9cdd04547c1bd8d9ee13c2d53a9e059ca8a6f0fdc94745c3a9776827d14
+
+## wallet file crypto (PBKDF2-HMAC-SHA256 + AES-128-CBC PKCS7, iv = salt)
+deriveKey('password', salt=00..0f, 500000 iters, 16) = c21c37b6728f17a31765f45fecd1e583
+deriveKey('password', salt=00..0f, 10000 iters, 16) = eb6c81535592203c092b158f8d390967
+encrypt('hello wallet', key, iv=salt) = 7f97edf047d16b130baebd5d15e88ac3
+decrypt ok=1 -> 'hello wallet'
+
+## done

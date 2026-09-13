@@ -1,0 +1,85 @@
+// Copyright (c) 2026, The WrkzCoin developers
+//
+// Please see the included LICENSE file for more information
+//
+// Packages the Rust library (built by cargo-ndk into src/main/jniLibs) as an
+// Android app. `gradle assembleDebug assembleRelease` produces both APKs.
+//
+// Signing: a release APK must be signed to install. Set PLUTON_KEYSTORE and
+// its three passwords (as environment variables or -P properties) to sign with
+// your own key. Without them the release APK is signed with the debug key, so
+// it installs and runs but must not be published — the build says so.
+
+plugins {
+    id 'com.android.application'
+}
+
+def keystorePath = System.getenv('PLUTON_KEYSTORE') ?: project.findProperty('PLUTON_KEYSTORE')
+def hasOwnKey = keystorePath != null && !keystorePath.toString().isEmpty() && file(keystorePath.toString()).exists()
+
+android {
+    namespace 'work.wrkz.rustpluton'
+    compileSdk 35
+    ndkVersion System.getenv('ANDROID_NDK_VERSION') ?: '27.0.12077973'
+
+    defaultConfig {
+        applicationId 'work.wrkz.rustpluton'
+        // Slint's Android backend needs API 26 (Android 8.0) or newer.
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName '1.0.0'
+    }
+
+    sourceSets {
+        main {
+            jniLibs.srcDirs = ['src/main/jniLibs']
+        }
+    }
+
+    if (hasOwnKey) {
+        signingConfigs {
+            release {
+                storeFile file(keystorePath.toString())
+                storePassword System.getenv('PLUTON_KEYSTORE_PASSWORD') ?: project.findProperty('PLUTON_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('PLUTON_KEY_ALIAS') ?: project.findProperty('PLUTON_KEY_ALIAS')
+                keyPassword System.getenv('PLUTON_KEY_PASSWORD') ?: project.findProperty('PLUTON_KEY_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            // Installable beside a release build, for testing.
+            applicationIdSuffix '.debug'
+            versionNameSuffix '-debug'
+            debuggable true
+        }
+        release {
+            minifyEnabled false
+            signingConfig hasOwnKey ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    // The Rust library carries no Java of its own beyond the dex Slint embeds.
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging false
+        }
+    }
+}
+
+tasks.register('warnAboutDebugSigning') {
+    doLast {
+        if (!hasOwnKey) {
+            logger.warn('')
+            logger.warn('  The release APK was signed with the DEBUG key, because PLUTON_KEYSTORE is not set.')
+            logger.warn('  It installs and runs, but do not publish it. See docs/PLUTON.md.')
+            logger.warn('')
+        }
+    }
+}
+
+tasks.matching { it.name == 'assembleRelease' }.configureEach {
+    finalizedBy 'warnAboutDebugSigning'
+}

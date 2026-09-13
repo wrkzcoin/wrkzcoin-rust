@@ -1,0 +1,118 @@
+[package]
+name = "wrkz-wallet"
+description = "WrkzCoin wallet library: file cipher and format, daemon client, sync, transaction construction (spec/09, spec/10)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+# `wrkz-wallet` and `wrkz-wallet-api` both offer a `--ssl` / `daemonSSL` remote
+# node, and the C++ asks "Does this daemon support SSL?" at the daemon prompt
+# (`zedwallet++/GetInput.cpp:383`), so the answer has to be usable out of the
+# box. `--no-default-features` still builds the plain-HTTP client, which is all
+# the seed nodes need (spec/09).
+default = ["https", "frontends"]
+# Allow https:// daemon URLs by compiling ureq's rustls backend.
+https = ["native", "ureq/tls"]
+# The blocking HTTP daemon client (`daemon::Daemon`). The wallet core - file,
+# sync, transfer, crypto - does not need it: it reaches the daemon through the
+# `SyncDaemon` and `TransferDaemon` traits, which the browser build of Rust
+# Pluton Wallet (apps/pluton) implements with XMLHttpRequest instead.
+native = ["dep:ureq"]
+# The programs (`wrkz-wallet`, `wrkz-wallet-api`, `wrkz-wallet-sync`,
+# `wrkz-wallet-send`) and the `api`, `cli` and `ipc` modules they are built
+# from. `--no-default-features` leaves the core alone, which is what builds
+# for wasm32-unknown-unknown.
+frontends = ["native", "dep:wrkz-rpc", "dep:wrkz-p2p"]
+# Ask a daemon for `Content-Encoding: zstd` as well as gzip, and decode it.
+# Only our own daemon, built with its `zstd` feature, ever answers with it; a
+# C++ daemon negotiates gzip and is unaffected. Off by default because the
+# zstd crate compiles C, unlike the pure-Rust gzip path.
+zstd = ["native", "dep:zstd"]
+
+[dependencies]
+wrkz-primitives = { workspace = true }
+wrkz-pow = { workspace = true }
+# The HTTP/1.1 parser, the JSON value type and the request limits of
+# `crates/wrkz-rpc/src/{http,json}.rs`, so `wrkz-wallet-api` does not grow a
+# second HTTP server. No cycle: `wrkz-rpc` does not depend on this crate.
+wrkz-rpc = { workspace = true, optional = true }
+# Only `wrkz_p2p::bind`, for the IPv6 listener of `wrkz-wallet-api` and
+# `wrkz-service` (`src/listen.rs`): `IPV6_V6ONLY` has to be set before
+# `bind(2)`, which `std::net` cannot do. Already in the graph through `wrkz-rpc`.
+wrkz-p2p = { workspace = true, optional = true }
+getrandom = { workspace = true }
+# The prefix and nonce a proof-of-work server exchanges (`txpow`).
+hex = { workspace = true }
+sha2 = { workspace = true }
+hmac = { workspace = true }
+pbkdf2 = { workspace = true }
+aes = { workspace = true }
+cbc = { workspace = true }
+zeroize = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# `gzip`: send `Accept-Encoding: gzip` and decompress, which a C++ node built
+# with zlib (every public one) and our own daemon both honour. A sync response
+# is hex and JSON, several times smaller compressed. `MAX_RESPONSE_BYTES`
+# bounds the decompressed stream, so a gzip bomb stops at the same cap.
+ureq = { workspace = true, features = ["json", "gzip"], optional = true }
+zstd = { workspace = true, optional = true }
+
+# In a browser: the clock (`platform::now_seconds`) and the CSPRNG
+# (`crypto.getRandomValues`, through getrandom's `wasm_js` backend).
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+js-sys = { workspace = true }
+getrandom = { workspace = true, features = ["wasm_js"] }
+
+[[bin]]
+name = "wrkz-wallet"
+required-features = ["frontends"]
+
+[[bin]]
+name = "wrkz-wallet-api"
+required-features = ["frontends"]
+
+[[bin]]
+name = "wrkz-wallet-sync"
+required-features = ["frontends"]
+
+[[bin]]
+name = "wrkz-wallet-send"
+required-features = ["frontends"]
+
+[[test]]
+name = "api"
+required-features = ["frontends"]
+
+[[test]]
+name = "api_logging"
+required-features = ["frontends"]
+
+[[test]]
+name = "cli"
+required-features = ["frontends"]
+
+[[test]]
+name = "sync"
+required-features = ["native"]
+
+[[test]]
+name = "transfer_live"
+required-features = ["native"]
+
+[dev-dependencies]
+hex = { workspace = true }
+# `tests/api.rs` reads back a gzip response from `wrkz-wallet-api`.
+flate2 = { workspace = true }
+# The acceptance test of stage 2.4 validates a transaction this crate builds
+# with the real consensus validator. `wrkz-chain` does not depend on
+# `wrkz-wallet`, so this is a dev-only edge and creates no cycle.
+wrkz-chain = { workspace = true }
+wrkz-storage = { workspace = true }
+
+[lints]
+workspace = true

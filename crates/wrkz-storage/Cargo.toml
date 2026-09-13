@@ -1,0 +1,32 @@
+[package]
+name = "wrkz-storage"
+description = "WrkzCoin chain storage: the RocksDB key layout and record encodings of the C++ node (spec/11-storage.md). Reads a database written by the C++ node; the key-value engine takes writes and batches, the typed per-record write path lands with stage 3."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+# The RocksDB engine (needs a C++ compiler and libclang for the bindings).
+# Enabled on the Linux test host: `cargo build --features rocksdb`.
+# ZSTD only, which is what the C++ node writes (spec/11 "Engine"). A database
+# from a node built without ZSTD support falls back to Snappy and would need
+# the `snappy` feature here as well.
+rocksdb = ["dep:rocksdb"]
+
+[dependencies]
+wrkz-pow = { workspace = true }
+wrkz-primitives = { workspace = true }
+hex = { workspace = true }
+rocksdb = { workspace = true, optional = true }
+
+[[bin]]
+name = "wrkz-db-inspect"
+path = "src/bin/inspect.rs"
+required-features = ["rocksdb"]
+
+[lints]
+workspace = true

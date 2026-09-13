@@ -1,0 +1,51 @@
+[package]
+name = "wrkz-node"
+description = "WrkzCoin node: the P2P connection manager, white/gray peer lists, back ping, timed sync and the block sync state machine of the C++ NodeServer and CryptoNoteProtocolHandler (spec/08-p2p-protocol.md), on top of wrkz-chain."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+# Persist the chain state in RocksDB instead of memory. Needs a C++ compiler
+# and libclang for the bindings, so the default build and every test here use
+# `wrkz_storage::MemStore`.
+rocksdb = ["wrkz-storage/rocksdb", "wrkz-chain/rocksdb", "wrkz-rpc/rocksdb"]
+# Forwards to wrkz-rpc: `Content-Encoding: zstd` for clients that ask for it.
+zstd = ["wrkz-rpc/zstd"]
+
+[dependencies]
+# `lite-snapshot`: `--import-lite-snapshot`, `--snapshot-info`, `--snapshot-stats`
+# and the `snapshot_export` console command. The daemon is the one program that
+# needs the C++ snapshot file, so it is the one that pays for zstd's C.
+wrkz-chain = { workspace = true, features = ["lite-snapshot"] }
+wrkz-mempool = { workspace = true }
+wrkz-rpc = { workspace = true }
+wrkz-p2p = { workspace = true }
+# The stratum server hashes every share it is sent (`src/stratum.rs`).
+wrkz-pow = { workspace = true }
+wrkz-primitives = { workspace = true }
+wrkz-storage = { workspace = true }
+getrandom = { workspace = true }
+hex = { workspace = true }
+
+# `statvfs(3)` for the free space the auto-prune watches: its struct layout
+# differs between glibc, musl, bionic and macOS (`daemon::available_bytes`).
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[dev-dependencies]
+# The wallet's own daemon client is the second oracle for the RPC shapes: the
+# integration test drives our daemon with the exact code that drives the C++ one.
+wrkz-wallet = { workspace = true }
+serde_json = { workspace = true }
+
+[[bin]]
+name = "wrkz-node"
+path = "src/bin/node.rs"
+
+[lints]
+workspace = true

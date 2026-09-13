@@ -1,0 +1,78 @@
+<!doctype html>
+<!--
+  Copyright (c) 2026, The WrkzCoin developers
+
+  Please see the included LICENSE file for more information
+
+  Rust Pluton Wallet in a browser. The wallet runs in a Web Worker and the
+  window draws on the canvas below; wallet files stay in this browser's
+  storage and the keys never leave it.
+
+  Serve this directory over HTTPS (rust-wallet.wrkz.work). The node it talks
+  to must also be HTTPS and must allow this origin, or the browser will refuse
+  the request before it is made.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0D1117" />
+    <title>Rust Pluton Wallet</title>
+    <link rel="manifest" href="./manifest.json" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #0d1117;
+        color: #e6edf3;
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        overflow: hidden;
+      }
+      #canvas {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+      #loading {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        font-size: 14px;
+        color: #8b949e;
+      }
+      #unsupported {
+        display: none;
+        padding: 24px;
+        line-height: 1.5;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="canvas"></canvas>
+    <div id="loading">Loading the wallet…</div>
+    <div id="unsupported">
+      <h1>This browser cannot run the wallet</h1>
+      <p>
+        It needs WebAssembly and Web Workers. Any current Firefox, Chrome, Edge or Safari has both.
+      </p>
+    </div>
+
+    <script type="module">
+      const loading = document.getElementById("loading");
+      if (typeof WebAssembly !== "object" || typeof Worker !== "function") {
+        loading.style.display = "none";
+        document.getElementById("unsupported").style.display = "block";
+      } else {
+        try {
+          const wallet = await import("./pkg/rust_pluton_wallet.js");
+          await wallet.default();
+          loading.remove();
+        } catch (e) {
+          loading.textContent = "The wallet could not start: " + e;
+        }
+      }
+    </script>
+  </body>
+</html>

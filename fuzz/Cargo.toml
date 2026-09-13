@@ -1,0 +1,61 @@
+[package]
+name = "wrkz-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+wrkz-primitives = { path = "../crates/wrkz-primitives" }
+wrkz-p2p = { path = "../crates/wrkz-p2p" }
+wrkz-pow = { path = "../crates/wrkz-pow" }
+wrkz-pow-ref = { path = "../crates/wrkz-pow-ref", features = ["pow"] }
+
+# Each target is a separate binary; `cargo fuzz list` enumerates them.
+[[bin]]
+name = "block"
+path = "fuzz_targets/block.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "transaction"
+path = "fuzz_targets/transaction.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tx_extra"
+path = "fuzz_targets/tx_extra.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "kv"
+path = "fuzz_targets/kv.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "p2p_messages"
+path = "fuzz_targets/p2p_messages.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pow_diff"
+path = "fuzz_targets/pow_diff.rs"
+test = false
+doc = false
+bench = false
+
+# Its own workspace so the root workspace and cargo-fuzz do not conflict.
+[workspace]

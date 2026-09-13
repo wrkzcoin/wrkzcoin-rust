@@ -1,0 +1,10 @@
+{
+  "name": "Rust Pluton Wallet",
+  "short_name": "Pluton",
+  "description": "The WrkzCoin wallet. Your keys stay in this browser.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0D1117",
+  "theme_color": "#0D1117"
+}

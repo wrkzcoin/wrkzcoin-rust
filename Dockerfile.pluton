@@ -1,0 +1,111 @@
+# Copyright (c) 2026, The WrkzCoin developers
+#
+# Please see the included LICENSE file for more information
+
+# Everything Rust Pluton Wallet is built with, in one image: the desktop
+# cross-toolchains it shares with the node, plus the Android SDK, a JDK and
+# Gradle for the APKs, and wasm-bindgen for the browser build.
+#
+#   docker build -f Dockerfile.cross -t wrkz-cross .        # once, the base
+#   docker build -f Dockerfile.pluton -t wrkz-pluton .
+#   docker run --rm -v "$PWD":/src -v wrkz-cargo:/usr/local/cargo/registry \
+#       -u "$(id -u):$(id -g)" wrkz-pluton scripts/pluton-build.sh
+#
+# Name platforms to build fewer: ... scripts/pluton-build.sh android web
+# The archives and both APKs land in dist/pluton, owned by you.
+#
+# macOS is not here; build it on a Mac with scripts/pluton-macos.sh.
+FROM wrkz-cross
+
+# Pinned. zig and the NDK are pinned by hash in scripts/cross-setup.sh; these
+# two are pinned by version and checked against the publisher's own checksum,
+# which catches a corrupted download but is not an independent attestation.
+ARG GRADLE_VERSION=8.9
+ARG ANDROID_CMDLINE_TOOLS=11076708
+ARG ANDROID_PLATFORM=35
+ARG ANDROID_BUILD_TOOLS=35.0.0
+# Must match the wasm-bindgen crate in apps/pluton/Cargo.lock, or the browser
+# build fails with a version mismatch.
+ARG WASM_BINDGEN_VERSION=0.2.128
+
+ENV ANDROID_HOME=/opt/android-sdk \
+    GRADLE_HOME=/opt/gradle \
+    JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+ENV PATH=$GRADLE_HOME/bin:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH
+
+# JDK 17: the Java helper Slint's Android backend compiles needs a JDK, and 21
+# is known to break against older Android build tools.
+# binaryen: `wasm-opt`, which takes roughly a third off the browser wallet.
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      openjdk-17-jdk-headless unzip zip curl ca-certificates binaryen \
+ && rm -rf /var/lib/apt/lists/*
+
+# Slint enumerates system fonts through fontique, which binds fontconfig, so
+# both Linux desktop targets need it to link against. There is no way around
+# it: fontique is not optional in i-slint-common, and it imports the entry
+# points directly, so fontconfig-sys's dlopen mode -- which replaces them with
+# dispatch macros -- does not compile against it. The arm64 copy comes from
+# ports.ubuntu.com, the archive carrying Ubuntu's non-x86 builds, beside the
+# amd64 one; nothing else in the image is multi-arch.
+RUN set -eu; \
+    sed -i '/^Types: deb$/a Architectures: amd64' /etc/apt/sources.list.d/ubuntu.sources; \
+    printf '%s\n' \
+      'Types: deb' \
+      'URIs: http://ports.ubuntu.com/ubuntu-ports/' \
+      'Suites: noble noble-updates noble-security' \
+      'Components: main universe' \
+      'Architectures: arm64' \
+      'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
+      > /etc/apt/sources.list.d/ubuntu-ports.sources; \
+    dpkg --add-architecture arm64; \
+    apt-get update; \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      libfontconfig-dev libfontconfig-dev:arm64; \
+    rm -rf /var/lib/apt/lists/*
+
+# The arm64 wallet is linked by cargo-zigbuild, so pkg-config has to be sent to
+# the arm64 .pc files and told that answering for another architecture is the
+# intention and not a mistake. What it reads there is already absolute
+# multi-arch paths, so there is no sysroot to rewrite.
+ENV PKG_CONFIG_ALLOW_CROSS=1 \
+    PKG_CONFIG_LIBDIR_aarch64_unknown_linux_gnu=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig
+
+# Gradle.
+RUN set -eu; \
+    curl -fL -o /tmp/gradle.zip "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip"; \
+    curl -fL -o /tmp/gradle.sha256 "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip.sha256"; \
+    echo "$(cat /tmp/gradle.sha256)  /tmp/gradle.zip" | sha256sum -c -; \
+    unzip -q /tmp/gradle.zip -d /opt; \
+    mv "/opt/gradle-${GRADLE_VERSION}" "$GRADLE_HOME"; \
+    rm -f /tmp/gradle.zip /tmp/gradle.sha256
+
+# The Android SDK: command-line tools, one platform, one set of build tools.
+RUN set -eu; \
+    mkdir -p "$ANDROID_HOME/cmdline-tools"; \
+    curl -fL -o /tmp/tools.zip \
+      "https://dl.google.com/android/repository/commandlinetools-linux-${ANDROID_CMDLINE_TOOLS}_latest.zip"; \
+    unzip -q /tmp/tools.zip -d "$ANDROID_HOME/cmdline-tools"; \
+    mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"; \
+    rm -f /tmp/tools.zip; \
+    yes | sdkmanager --licenses > /dev/null; \
+    sdkmanager "platforms;android-${ANDROID_PLATFORM}" "build-tools;${ANDROID_BUILD_TOOLS}" "platform-tools" > /dev/null; \
+    test -f "$ANDROID_HOME/platforms/android-${ANDROID_PLATFORM}/android.jar"
+
+# Slint's Android backend compiles a Java helper against android.jar, which it
+# asks the android-build crate to find. Naming the jar outright skips that
+# search, which comes up empty here even with the platform installed and
+# readable, and pins the build to the one platform this image has rather than
+# whichever the search would have liked best.
+ENV ANDROID_JAR=$ANDROID_HOME/platforms/android-$ANDROID_PLATFORM/android.jar
+
+# The browser build, and the wasm target.
+RUN cargo install wasm-bindgen-cli --version "$WASM_BINDGEN_VERSION" --locked \
+ && rustup target add wasm32-unknown-unknown
+
+# A build run as the calling user (-u) writes here.
+RUN chmod -R a+w "$ANDROID_HOME" "$CARGO_HOME" "$RUSTUP_HOME" \
+ && mkdir -p /home/builder/.gradle && chmod -R a+w /home/builder
+ENV GRADLE_USER_HOME=/home/builder/.gradle
+
+WORKDIR /src

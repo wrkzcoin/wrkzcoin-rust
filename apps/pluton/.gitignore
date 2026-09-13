@@ -1,0 +1,6 @@
+/target
+/web/pkg
+/android/build
+/android/.gradle
+/android/app/build
+/android/app/src/main/jniLibs

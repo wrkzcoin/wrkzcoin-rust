@@ -1,0 +1,51 @@
+[package]
+name = "wrkz-chain"
+description = "WrkzCoin chain state and consensus validation: Core::addBlock order, validateBlock, ValidateTransaction with state, reward with the size penalty, checkpoints, chain segments and reorganisation (spec/06, spec/07). Includes wrkz-replay, the offline replay of a C++ node's database."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+# Forwards to wrkz-storage's RocksDB engine; needed by `wrkz-replay`, which
+# opens a C++ database read-only and writes our state to a second one.
+rocksdb = ["wrkz-storage/rocksdb"]
+# Lite node snapshots (`snapshot`): the C++ `.litesnap` container, its import
+# and its export. Its frames are zstd, and the zstd crate compiles C, so it is
+# off by default and only the daemon (`wrkz-node`) turns it on; the wallet
+# programs and `wrkz-service`, which reach this crate through `wrkz-rpc`, never
+# build it on their own.
+lite-snapshot = ["dep:zstd"]
+
+[dependencies]
+wrkz-pow = { workspace = true }
+wrkz-primitives = { workspace = true }
+wrkz-storage = { workspace = true }
+hex = { workspace = true }
+zstd = { workspace = true, optional = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+# Import and export against a chain built from genesis (`snapshot`).
+[[test]]
+name = "lite_snapshot"
+required-features = ["lite-snapshot"]
+
+[[bin]]
+name = "wrkz-replay"
+path = "src/bin/replay.rs"
+required-features = ["rocksdb"]
+
+# Rebuild a state someone handed you from its own block bodies and compare it
+# record for record (docs/SNAPSHOT.md).
+[[bin]]
+name = "wrkz-verify-state"
+path = "src/bin/verify_state.rs"
+required-features = ["rocksdb"]
+
+[lints]
+workspace = true

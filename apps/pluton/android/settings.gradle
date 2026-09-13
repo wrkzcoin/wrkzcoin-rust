@@ -1,0 +1,21 @@
+// Copyright (c) 2026, The WrkzCoin developers
+//
+// Please see the included LICENSE file for more information
+
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = "RustPlutonWallet"
+include ':app'

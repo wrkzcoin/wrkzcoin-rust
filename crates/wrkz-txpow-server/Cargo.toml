@@ -1,0 +1,33 @@
+[package]
+name = "wrkz-txpow-server"
+description = "WrkzCoin transaction proof-of-work server: finds the cn_upx nonce of an unsigned transaction prefix for wallets that would rather not spend their own CPU on it (phones, browsers). Option for option and route for route the C++ wrkz-txpow-server (src/txpowserver)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+wrkz-pow = { workspace = true }
+wrkz-primitives = { workspace = true }
+# The HTTP/1.1 reader and writer, with its caps and deadlines, that the daemon
+# and wrkz-wallet-api use.
+wrkz-rpc = { workspace = true }
+# `bind_ipv6_only`, for the second listener of `--bind-ipv6-address`.
+wrkz-p2p = { workspace = true }
+getrandom = { workspace = true }
+hex = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+# The end-to-end test drives the server with the wallet's own client.
+wrkz-wallet = { workspace = true }
+ureq = { workspace = true }
+
+[[bin]]
+name = "wrkz-txpow-server"
+path = "src/main.rs"
+
+[lints]
+workspace = true

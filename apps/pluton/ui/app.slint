@@ -1,0 +1,1248 @@
+// Copyright (c) 2026, The WrkzCoin developers
+//
+// Please see the included LICENSE file for more information
+
+// Rust Pluton Wallet. One window for every platform: a side rail on a desktop,
+// a tab bar on a phone, the same pages behind both.
+//
+// Everything the window shows lives in `State`, and everything it asks for
+// goes through `Actions`; `src/ui.rs` fills the one and answers the other, so
+// no page reaches into another page.
+
+import { Button, LineEdit, CheckBox, ListView, ScrollView, AboutSlint, VerticalBox, HorizontalBox } from "std-widgets.slint";
+
+export struct TxRow {
+    hash: string,
+    when: string,
+    amount: string,
+    incoming: bool,
+    status: string,
+}
+
+export global Theme {
+    in-out property <bool> dark: true;
+    out property <color> bg: dark ? #0D1117 : #F0F1F3;
+    out property <color> surface: dark ? #161B22 : #F8F9FA;
+    out property <color> variant: dark ? #21262D : #EAECEF;
+    out property <color> divider: dark ? #30363D : #CDD1D8;
+    out property <color> text: dark ? #E6EDF3 : #1A1F2E;
+    out property <color> dim: dark ? #8B949E : #4A5568;
+    out property <color> primary: dark ? #42A5F5 : #1E88E5;
+    out property <color> on-primary: dark ? #0D1117 : #FFFFFF;
+    out property <color> ok: #43A047;
+    out property <color> warn: #FB8C00;
+    out property <color> bad: #E53935;
+}
+
+export global State {
+    // Which page is showing: wallets, overview, send, receive, history,
+    // settings, about.
+    in-out property <string> page: "wallets";
+    in-out property <bool> wallet-open: false;
+    in-out property <bool> busy: false;
+
+    // Wallets on this device.
+    in-out property <[string]> wallets: [];
+    in-out property <string> wallet-name: "";
+
+    // Money and syncing.
+    in-out property <string> address: "";
+    in-out property <string> unlocked: "0.00";
+    in-out property <string> locked: "0.00";
+    in-out property <float> sync-percent: 0;
+    in-out property <string> sync-text: "Not connected";
+    in-out property <bool> synced: false;
+    in-out property <bool> view-only: false;
+    in-out property <[TxRow]> transactions: [];
+
+    // What just happened.
+    in-out property <string> notice: "";
+    // info, warning or error.
+    in-out property <string> notice-kind: "info";
+
+    // The seed, shown once when a wallet is created.
+    in-out property <string> new-seed: "";
+
+    // A transaction waiting to be confirmed.
+    in-out property <bool> confirm-visible: false;
+    in-out property <string> confirm-address: "";
+    in-out property <string> confirm-amount: "";
+    in-out property <string> confirm-fee: "";
+    in-out property <string> confirm-ring: "";
+    in-out property <string> confirm-pow: "";
+
+    // Settings.
+    in-out property <string> node-url: "";
+    in-out property <string> pow-url: "";
+    in-out property <string> pow-key: "";
+    in-out property <string> pow-result: "";
+    in-out property <string> suggested-pow-url: "";
+
+    // Keys, after the password is given again.
+    in-out property <bool> secrets-visible: false;
+    in-out property <string> secret-seed: "";
+    in-out property <string> secret-spend: "";
+    in-out property <string> secret-view: "";
+
+    in-out property <string> version: "";
+
+    // True on a phone, or a window narrow enough to want the tab bar. Set from
+    // the width when it changes, never bound to it: a binding would make the
+    // layout depend on the layout's own measurements.
+    in-out property <bool> narrow: false;
+}
+
+export global Actions {
+    callback open-wallet(string, string);
+    // name, password, kind (new/seed/keys/view), secret, second-secret, scan-height
+    callback create-wallet(string, string, string, string, string, int);
+    callback close-wallet();
+    callback prepare-send(string, string, string, bool);
+    callback confirm-send();
+    callback cancel-send();
+    callback optimize();
+    callback set-node(string);
+    callback set-pow-server(string, string);
+    callback test-pow-server(string, string);
+    callback reveal-secrets(string);
+    callback change-password(string, string);
+    callback rescan(int);
+    callback dismiss-notice();
+}
+
+component Card inherits Rectangle {
+    background: Theme.surface;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: Theme.divider;
+}
+
+component Heading inherits Text {
+    color: Theme.text;
+    font-size: 20px;
+    font-weight: 700;
+}
+
+component Label inherits Text {
+    color: Theme.dim;
+    font-size: 12px;
+}
+
+// The emphasised action. Slint's own `primary: true` takes the desktop's
+// accent colour, which differs from machine to machine; a wallet should look
+// the same everywhere, so the accent is ours.
+component PrimaryButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    height: 34px;
+    border-radius: 8px;
+    background: !enabled ? Theme.variant : (touch.pressed ? Theme.primary.darker(20%) : Theme.primary);
+
+    Text {
+        text: root.text;
+        color: root.enabled ? Theme.on-primary : Theme.dim;
+        font-size: 13px;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: 100%;
+        height: 100%;
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// One of a row of choices, filled while it is the chosen one.
+component ToggleButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> selected: false;
+    callback clicked();
+
+    height: 34px;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: selected ? Theme.primary : Theme.divider;
+    background: selected ? Theme.primary : transparent;
+
+    Text {
+        text: root.text;
+        color: root.selected ? Theme.on-primary : Theme.dim;
+        font-size: 13px;
+        font-weight: root.selected ? 600 : 400;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: 100%;
+        height: 100%;
+    }
+
+    TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+component NavButton inherits Rectangle {
+    in property <string> label;
+    in property <string> target;
+    in property <bool> wide: true;
+    height: 40px;
+    background: State.page == target ? Theme.variant : transparent;
+    border-radius: 8px;
+
+    HorizontalLayout {
+        padding-left: wide ? 12px : 0;
+        alignment: wide ? LayoutAlignment.start : LayoutAlignment.center;
+        Text {
+            text: label;
+            vertical-alignment: center;
+            color: State.page == target ? Theme.primary : Theme.dim;
+            font-size: 13px;
+            font-weight: State.page == target ? 700 : 400;
+        }
+    }
+
+    TouchArea {
+        clicked => {
+            State.page = target;
+        }
+    }
+}
+
+// The wallet list, and the ways in: open one, make one, restore one.
+component WalletsPage inherits Rectangle {
+    background: Theme.bg;
+    property <string> mode: "open";
+    property <string> chosen: "";
+
+    ScrollView {
+        VerticalBox {
+            padding: 24px;
+            spacing: 14px;
+            alignment: start;
+
+            Heading {
+                text: "Rust Pluton Wallet";
+            }
+
+            Text {
+                text: "A WrkzCoin wallet. Your keys stay on this device.";
+                color: Theme.dim;
+                wrap: word-wrap;
+            }
+
+            HorizontalBox {
+                padding: 0;
+                spacing: 8px;
+                ToggleButton {
+                    text: "Open";
+                    selected: mode == "open";
+                    clicked => {
+                        mode = "open";
+                    }
+                }
+
+                ToggleButton {
+                    text: "Create";
+                    selected: mode == "create";
+                    clicked => {
+                        mode = "create";
+                    }
+                }
+
+                ToggleButton {
+                    text: "Restore";
+                    selected: mode == "restore";
+                    clicked => {
+                        mode = "restore";
+                    }
+                }
+            }
+
+            if mode == "open": Card {
+                height: 260px;
+                VerticalBox {
+                    padding: 14px;
+                    spacing: 8px;
+                    Label {
+                        text: "WALLETS ON THIS DEVICE";
+                    }
+
+                    if State.wallets.length == 0: Text {
+                        text: "None yet — create one, or restore from a seed.";
+                        color: Theme.dim;
+                    }
+
+                    ListView {
+                        for name in State.wallets: Rectangle {
+                            height: 34px;
+                            background: chosen == name ? Theme.variant : transparent;
+                            border-radius: 6px;
+                            HorizontalLayout {
+                                padding-left: 8px;
+                                Text {
+                                    text: name;
+                                    color: Theme.text;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            TouchArea {
+                                clicked => {
+                                    chosen = name;
+                                }
+                            }
+                        }
+                    }
+
+                    open-password := LineEdit {
+                        placeholder-text: "Password";
+                        input-type: password;
+                    }
+
+                    PrimaryButton {
+                        text: "Open wallet";
+                        enabled: chosen != "" && !State.busy;
+                        clicked => {
+                            Actions.open-wallet(chosen, open-password.text);
+                        }
+                    }
+                }
+            }
+
+            if mode == "create": Card {
+                VerticalBox {
+                    padding: 14px;
+                    spacing: 8px;
+                    Label {
+                        text: "NEW WALLET";
+                    }
+
+                    new-name := LineEdit {
+                        placeholder-text: "Name, e.g. main";
+                    }
+
+                    new-password := LineEdit {
+                        placeholder-text: "Password";
+                        input-type: password;
+                    }
+
+                    Text {
+                        text: "The 25-word seed is shown once, after the wallet is made. Write it down: it is the only way back into this wallet.";
+                        color: Theme.dim;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+
+                    PrimaryButton {
+                        text: "Create wallet";
+                        enabled: new-name.text != "" && new-password.text != "" && !State.busy;
+                        clicked => {
+                            Actions.create-wallet(new-name.text, new-password.text, "new", "", "", 0);
+                        }
+                    }
+                }
+            }
+
+            if mode == "restore": Card {
+                VerticalBox {
+                    padding: 14px;
+                    spacing: 8px;
+                    Label {
+                        text: "RESTORE A WALLET";
+                    }
+
+                    r-name := LineEdit {
+                        placeholder-text: "Name";
+                    }
+
+                    r-password := LineEdit {
+                        placeholder-text: "Password";
+                        input-type: password;
+                    }
+
+                    r-seed := LineEdit {
+                        placeholder-text: "25-word seed";
+                    }
+
+                    r-height := LineEdit {
+                        placeholder-text: "Scan from block (0 for the whole chain)";
+                        input-type: number;
+                    }
+
+                    PrimaryButton {
+                        text: "Restore from seed";
+                        enabled: r-name.text != "" && r-seed.text != "" && !State.busy;
+                        clicked => {
+                            Actions.create-wallet(r-name.text, r-password.text, "seed", r-seed.text, "", r-height.text.to-float());
+                        }
+                    }
+
+                    Rectangle {
+                        height: 1px;
+                        background: Theme.divider;
+                    }
+
+                    Label {
+                        text: "OR FROM KEYS";
+                    }
+
+                    k-spend := LineEdit {
+                        placeholder-text: "Private spend key (64 hex)";
+                    }
+
+                    k-view := LineEdit {
+                        placeholder-text: "Private view key (64 hex)";
+                    }
+
+                    Button {
+                        text: "Restore from keys";
+                        enabled: r-name.text != "" && k-spend.text != "" && k-view.text != "" && !State.busy;
+                        clicked => {
+                            Actions.create-wallet(r-name.text, r-password.text, "keys", k-spend.text, k-view.text, r-height.text.to-float());
+                        }
+                    }
+
+                    Label {
+                        text: "OR WATCH AN ADDRESS";
+                    }
+
+                    v-address := LineEdit {
+                        placeholder-text: "Wrkz… address";
+                    }
+
+                    Button {
+                        text: "Restore view-only";
+                        enabled: r-name.text != "" && v-address.text != "" && k-view.text != "" && !State.busy;
+                        clicked => {
+                            Actions.create-wallet(r-name.text, r-password.text, "view", k-view.text, v-address.text, r-height.text.to-float());
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component OverviewPage inherits ScrollView {
+    VerticalBox {
+        padding: 20px;
+        spacing: 14px;
+        alignment: start;
+
+        Card {
+            VerticalBox {
+                padding: 16px;
+                spacing: 4px;
+                Label {
+                    text: "AVAILABLE";
+                }
+
+                Text {
+                    text: State.unlocked + " WRKZ";
+                    color: Theme.text;
+                    font-size: 30px;
+                    font-weight: 700;
+                }
+
+                Text {
+                    text: "Locked " + State.locked + " WRKZ" + (State.view-only ? "   ·   view-only wallet" : "");
+                    color: Theme.dim;
+                    font-size: 12px;
+                }
+
+                HorizontalBox {
+                    padding-top: 8px;
+                    padding-left: 0;
+                    spacing: 8px;
+                    alignment: start;
+                    PrimaryButton {
+                        text: "Send";
+                        width: 110px;
+                        enabled: !State.view-only;
+                        clicked => {
+                            State.page = "send";
+                        }
+                    }
+
+                    Button {
+                        text: "Receive";
+                        clicked => {
+                            State.page = "receive";
+                        }
+                    }
+                }
+            }
+        }
+
+        Card {
+            VerticalBox {
+                padding: 16px;
+                spacing: 8px;
+                HorizontalLayout {
+                    Text {
+                        text: State.sync-text;
+                        color: State.synced ? Theme.ok : Theme.dim;
+                        font-size: 13px;
+                    }
+
+                    Rectangle { }
+
+                    Text {
+                        text: Math.round(State.sync-percent) + "%";
+                        color: Theme.dim;
+                        font-size: 13px;
+                    }
+                }
+
+                Rectangle {
+                    height: 6px;
+                    background: Theme.variant;
+                    border-radius: 3px;
+                    Rectangle {
+                        x: 0;
+                        width: parent.width * State.sync-percent / 100;
+                        height: parent.height;
+                        background: Theme.primary;
+                        border-radius: 3px;
+                    }
+                }
+
+                Text {
+                    text: "Node: " + State.node-url;
+                    color: Theme.dim;
+                    font-size: 11px;
+                }
+            }
+        }
+
+        Card {
+            height: 300px;
+            VerticalBox {
+                padding: 16px;
+                spacing: 6px;
+                Label {
+                    text: "RECENT TRANSACTIONS";
+                }
+
+                if State.transactions.length == 0: Text {
+                    text: "Nothing yet.";
+                    color: Theme.dim;
+                }
+
+                ListView {
+                    for tx in State.transactions: Rectangle {
+                        height: 44px;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            VerticalLayout {
+                                alignment: center;
+                                Text {
+                                    text: tx.status;
+                                    color: Theme.text;
+                                    font-size: 13px;
+                                }
+
+                                Text {
+                                    text: tx.when + "  ·  " + tx.hash;
+                                    color: Theme.dim;
+                                    font-size: 11px;
+                                }
+                            }
+
+                            Rectangle { }
+
+                            Text {
+                                text: tx.amount;
+                                color: tx.incoming ? Theme.ok : Theme.text;
+                                font-size: 13px;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component SendPage inherits ScrollView {
+    VerticalBox {
+        padding: 20px;
+        spacing: 12px;
+        alignment: start;
+
+        Heading {
+            text: "Send WRKZ";
+        }
+
+        Card {
+            VerticalBox {
+                padding: 16px;
+                spacing: 10px;
+
+                Label {
+                    text: "TO ADDRESS";
+                }
+
+                to-address := LineEdit {
+                    placeholder-text: "Wrkz…";
+                }
+
+                Label {
+                    text: "AMOUNT (WRKZ)";
+                }
+
+                amount := LineEdit {
+                    placeholder-text: "0.00";
+                }
+
+                Label {
+                    text: "PAYMENT ID (OPTIONAL)";
+                }
+
+                payment-id := LineEdit {
+                    placeholder-text: "64 hex characters";
+                }
+
+                send-all := CheckBox {
+                    text: "Send everything this wallet holds";
+                }
+
+                Text {
+                    text: "The fee and ring size are worked out for you and shown before anything is sent.";
+                    color: Theme.dim;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+
+                PrimaryButton {
+                    text: State.busy ? "Preparing…" : "Prepare transaction";
+                    enabled: to-address.text != "" && (amount.text != "" || send-all.checked) && !State.busy;
+                    clicked => {
+                        Actions.prepare-send(to-address.text, amount.text, payment-id.text, send-all.checked);
+                    }
+                }
+            }
+        }
+    }
+}
+
+component ReceivePage inherits ScrollView {
+    VerticalBox {
+        padding: 20px;
+        spacing: 12px;
+        alignment: start;
+
+        Heading {
+            text: "Receive";
+        }
+
+        Card {
+            VerticalBox {
+                padding: 16px;
+                spacing: 10px;
+                Label {
+                    text: "YOUR ADDRESS";
+                }
+
+                address-box := TextInput {
+                    text: State.address;
+                    read-only: true;
+                    wrap: char-wrap;
+                    color: Theme.text;
+                    font-size: 13px;
+                    font-family: "monospace";
+                }
+
+                Button {
+                    text: "Select all";
+                    clicked => {
+                        address-box.select-all();
+                    }
+                }
+
+                Text {
+                    text: "Anyone sending to this address pays into this wallet. It is safe to share.";
+                    color: Theme.dim;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
+}
+
+component HistoryPage inherits Rectangle {
+    VerticalBox {
+        padding: 20px;
+        spacing: 10px;
+        Heading {
+            text: "History";
+        }
+
+        Card {
+            VerticalBox {
+                padding: 12px;
+                ListView {
+                    for tx in State.transactions: Rectangle {
+                        height: 52px;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            VerticalLayout {
+                                alignment: center;
+                                Text {
+                                    text: tx.status;
+                                    color: Theme.text;
+                                    font-size: 13px;
+                                }
+
+                                Text {
+                                    text: tx.when;
+                                    color: Theme.dim;
+                                    font-size: 11px;
+                                }
+
+                                Text {
+                                    text: tx.hash;
+                                    color: Theme.dim;
+                                    font-size: 11px;
+                                }
+                            }
+
+                            Rectangle { }
+
+                            Text {
+                                text: tx.amount;
+                                color: tx.incoming ? Theme.ok : Theme.text;
+                                font-size: 14px;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component SettingsPage inherits ScrollView {
+    VerticalBox {
+        padding: 20px;
+        spacing: 12px;
+        alignment: start;
+
+        Heading {
+            text: "Settings";
+        }
+
+        Card {
+            VerticalBox {
+                padding: 16px;
+                spacing: 8px;
+                Label {
+                    text: "NODE";
+                }
+
+                node := LineEdit {
+                    text: State.node-url;
+                    placeholder-text: "http://node.example.com:17856";
+                }
+
+                Button {
+                    text: "Use this node";
+                    clicked => {
+                        Actions.set-node(node.text);
+                    }
+                }
+            }
+        }
+
+        Card {
+            VerticalBox {
+                padding: 16px;
+                spacing: 8px;
+                Label {
+                    text: "TRANSACTION PROOF-OF-WORK SERVER";
+                }
+
+                Text {
+                    text: "Every transaction carries a small proof of work. This device computes it; a server can do it instead, which matters most on a phone or in a browser. Leave empty to always compute it here. The server sees the unsigned transaction, never a key.";
+                    color: Theme.dim;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+
+                pow := LineEdit {
+                    text: State.pow-url;
+                    placeholder-text: State.suggested-pow-url;
+                }
+
+                pow-key := LineEdit {
+                    text: State.pow-key;
+                    placeholder-text: "API key (only if the server asks for one)";
+                }
+
+                HorizontalBox {
+                    padding: 0;
+                    spacing: 8px;
+                    Button {
+                        text: "Test";
+                        clicked => {
+                            Actions.test-pow-server(pow.text, pow-key.text);
+                        }
+                    }
+
+                    PrimaryButton {
+                        text: "Apply";
+                        width: 100px;
+                        clicked => {
+                            Actions.set-pow-server(pow.text, pow-key.text);
+                        }
+                    }
+                }
+
+                if State.pow-result != "": Text {
+                    text: State.pow-result;
+                    color: Theme.dim;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+            }
+        }
+
+        Card {
+            VerticalBox {
+                padding: 16px;
+                spacing: 8px;
+                Label {
+                    text: "THIS WALLET";
+                }
+
+                secret-password := LineEdit {
+                    placeholder-text: "Password, to show the seed and keys";
+                    input-type: password;
+                }
+
+                Button {
+                    text: "Show seed and keys";
+                    clicked => {
+                        Actions.reveal-secrets(secret-password.text);
+                    }
+                }
+
+                if State.secrets-visible: VerticalLayout {
+                    spacing: 6px;
+                    Label {
+                        text: "SEED";
+                    }
+
+                    TextInput {
+                        text: State.secret-seed;
+                        read-only: true;
+                        wrap: word-wrap;
+                        color: Theme.text;
+                        font-size: 12px;
+                    }
+
+                    Label {
+                        text: "PRIVATE SPEND KEY";
+                    }
+
+                    TextInput {
+                        text: State.secret-spend;
+                        read-only: true;
+                        wrap: char-wrap;
+                        color: Theme.text;
+                        font-size: 12px;
+                    }
+
+                    Label {
+                        text: "PRIVATE VIEW KEY";
+                    }
+
+                    TextInput {
+                        text: State.secret-view;
+                        read-only: true;
+                        wrap: char-wrap;
+                        color: Theme.text;
+                        font-size: 12px;
+                    }
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: Theme.divider;
+                }
+
+                old-password := LineEdit {
+                    placeholder-text: "Current password";
+                    input-type: password;
+                }
+
+                new-password := LineEdit {
+                    placeholder-text: "New password";
+                    input-type: password;
+                }
+
+                Button {
+                    text: "Change password";
+                    clicked => {
+                        Actions.change-password(old-password.text, new-password.text);
+                    }
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: Theme.divider;
+                }
+
+                rescan-height := LineEdit {
+                    placeholder-text: "Scan again from block…";
+                    input-type: number;
+                }
+
+                Button {
+                    text: "Rescan";
+                    clicked => {
+                        Actions.rescan(rescan-height.text.to-float());
+                    }
+                }
+
+                Button {
+                    text: "Combine small inputs (optimize)";
+                    enabled: !State.view-only;
+                    clicked => {
+                        Actions.optimize();
+                    }
+                }
+
+                Button {
+                    text: "Close wallet";
+                    clicked => {
+                        Actions.close-wallet();
+                    }
+                }
+            }
+        }
+    }
+}
+
+component AboutPage inherits ScrollView {
+    VerticalBox {
+        padding: 20px;
+        spacing: 12px;
+        alignment: start;
+
+        Heading {
+            text: "About";
+        }
+
+        Card {
+            VerticalBox {
+                padding: 16px;
+                spacing: 8px;
+                Text {
+                    text: State.version;
+                    color: Theme.text;
+                    font-size: 14px;
+                }
+
+                Text {
+                    text: "The WrkzCoin wallet, on the Rust wallet core. Your keys never leave this device.";
+                    color: Theme.dim;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+
+                // The Slint licence asks that an application built with it show
+                // this notice; docs/PLUTON.md says the same in writing.
+                AboutSlint { }
+            }
+        }
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "Rust Pluton Wallet";
+    background: Theme.bg;
+    preferred-width: 1000px;
+    preferred-height: 680px;
+    min-width: 360px;
+    min-height: 520px;
+
+    // The navigation moves to the bottom on a narrow window — a phone, or a
+    // window someone has made small. Assigned on startup and on every width
+    // change rather than bound, so the choice of layout cannot feed back into
+    // the width it is measured from.
+    init => {
+        State.narrow = root.width < 720px;
+    }
+
+    changed width => {
+        State.narrow = root.width < 720px;
+    }
+
+    VerticalLayout {
+        // Whatever just happened, until it is dismissed.
+        if State.notice != "": Rectangle {
+            height: 36px;
+            background: State.notice-kind == "error" ? Theme.bad : (State.notice-kind == "warning" ? Theme.warn : Theme.primary);
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 8px;
+                spacing: 8px;
+                Text {
+                    text: State.notice;
+                    color: white;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+
+                Rectangle {
+                    width: 28px;
+                    Text {
+                        text: "✕";
+                        color: white;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                    }
+
+                    TouchArea {
+                        clicked => {
+                            Actions.dismiss-notice();
+                        }
+                    }
+                }
+            }
+        }
+
+        if !State.wallet-open: WalletsPage { }
+
+        if State.wallet-open && !State.narrow: HorizontalLayout {
+            Rectangle {
+                width: 180px;
+                background: Theme.surface;
+                VerticalLayout {
+                    padding: 10px;
+                    spacing: 2px;
+                    alignment: start;
+                    Text {
+                        text: State.wallet-name;
+                        color: Theme.text;
+                        font-size: 14px;
+                        font-weight: 700;
+                    }
+
+                    Rectangle {
+                        height: 10px;
+                    }
+
+                    NavButton {
+                        label: "Overview";
+                        target: "overview";
+                    }
+
+                    NavButton {
+                        label: "Send";
+                        target: "send";
+                    }
+
+                    NavButton {
+                        label: "Receive";
+                        target: "receive";
+                    }
+
+                    NavButton {
+                        label: "History";
+                        target: "history";
+                    }
+
+                    NavButton {
+                        label: "Settings";
+                        target: "settings";
+                    }
+
+                    NavButton {
+                        label: "About";
+                        target: "about";
+                    }
+                }
+            }
+
+            content := Rectangle {
+                if State.page == "send": SendPage { }
+                if State.page == "receive": ReceivePage { }
+                if State.page == "history": HistoryPage { }
+                if State.page == "settings": SettingsPage { }
+                if State.page == "about": AboutPage { }
+                if State.page != "send" && State.page != "receive" && State.page != "history" && State.page != "settings" && State.page != "about": OverviewPage { }
+            }
+        }
+
+        if State.wallet-open && State.narrow: VerticalLayout {
+            Rectangle {
+                vertical-stretch: 1;
+                if State.page == "send": SendPage { }
+                if State.page == "receive": ReceivePage { }
+                if State.page == "history": HistoryPage { }
+                if State.page == "settings": SettingsPage { }
+                if State.page == "about": AboutPage { }
+                if State.page != "send" && State.page != "receive" && State.page != "history" && State.page != "settings" && State.page != "about": OverviewPage { }
+            }
+
+            Rectangle {
+                height: 56px;
+                background: Theme.surface;
+                HorizontalLayout {
+                    padding: 6px;
+                    spacing: 4px;
+                    NavButton {
+                        label: "Wallet";
+                        target: "overview";
+                        wide: false;
+                    }
+
+                    NavButton {
+                        label: "Send";
+                        target: "send";
+                        wide: false;
+                    }
+
+                    NavButton {
+                        label: "Receive";
+                        target: "receive";
+                        wide: false;
+                    }
+
+                    NavButton {
+                        label: "History";
+                        target: "history";
+                        wide: false;
+                    }
+
+                    NavButton {
+                        label: "Settings";
+                        target: "settings";
+                        wide: false;
+                    }
+                }
+            }
+        }
+    }
+
+    // The seed, shown once, over everything else.
+    if State.new-seed != "": Rectangle {
+        background: #000000CC;
+        VerticalLayout {
+            alignment: center;
+            HorizontalLayout {
+                alignment: center;
+                Card {
+                    width: min(root.width - 40px, 520px);
+                    VerticalBox {
+                        padding: 18px;
+                        spacing: 10px;
+                        Heading {
+                            text: "Write down your seed";
+                        }
+
+                        Text {
+                            text: "These 25 words are the only way back into this wallet. Anyone who has them can spend from it. It is not shown again.";
+                            color: Theme.dim;
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
+
+                        TextInput {
+                            text: State.new-seed;
+                            read-only: true;
+                            wrap: word-wrap;
+                            color: Theme.text;
+                            font-size: 13px;
+                        }
+
+                        PrimaryButton {
+                            text: "I have written it down";
+                            clicked => {
+                                State.new-seed = "";
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // The confirmation before any money moves.
+    if State.confirm-visible: Rectangle {
+        background: #000000CC;
+        VerticalLayout {
+            alignment: center;
+            HorizontalLayout {
+                alignment: center;
+                Card {
+                    width: min(root.width - 40px, 520px);
+                    VerticalBox {
+                        padding: 18px;
+                        spacing: 8px;
+                        Heading {
+                            text: "Send " + State.confirm-amount + " WRKZ?";
+                        }
+
+                        Label {
+                            text: "TO";
+                        }
+
+                        Text {
+                            text: State.confirm-address;
+                            color: Theme.text;
+                            font-size: 12px;
+                            wrap: char-wrap;
+                        }
+
+                        Text {
+                            text: "Fee " + State.confirm-fee + " WRKZ   ·   ring size " + State.confirm-ring;
+                            color: Theme.dim;
+                            font-size: 12px;
+                        }
+
+                        if State.confirm-pow != "": Text {
+                            text: State.confirm-pow;
+                            color: Theme.dim;
+                            font-size: 11px;
+                            wrap: word-wrap;
+                        }
+
+                        HorizontalBox {
+                            padding: 0;
+                            spacing: 8px;
+                            Button {
+                                text: "Cancel";
+                                clicked => {
+                                    Actions.cancel-send();
+                                }
+                            }
+
+                            PrimaryButton {
+                                text: "Send";
+                                width: 120px;
+                                clicked => {
+                                    Actions.confirm-send();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

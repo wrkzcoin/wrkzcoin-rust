@@ -1,0 +1,27 @@
+[package]
+name = "wrkz-p2p"
+description = "WrkzCoin peer-to-peer wire protocol: Levin framing, handshake, timed sync, ping and the CryptoNote block/transaction notifications (spec/08-p2p-protocol.md)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+wrkz-primitives = { workspace = true }
+hex = { workspace = true }
+getrandom = { workspace = true }
+
+# `IPV6_V6ONLY` has to be set between socket(2) and bind(2), which `std::net`
+# cannot express; see `src/bind.rs`. Unix only — Windows reaches the same
+# option through ws2_32, declared in that module (see the notes there).
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[[bin]]
+name = "wrkz-p2p-probe"
+path = "src/bin/probe.rs"
+
+[lints]
+workspace = true

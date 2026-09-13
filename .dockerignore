@@ -1,0 +1,49 @@
+# What `docker build .` must not send to the daemon.
+#
+# A pattern without a leading `**/` matches at the root only, so every nested
+# build directory is named on its own line — a bare `target/` does not cover
+# `apps/pluton/target`.
+#
+# The chain data matters most: a node or an import run inside the checkout
+# leaves tens of gigabytes here, and without these lines every `docker build .`
+# copies all of it before the first instruction runs.
+
+# Build output, at every level it appears.
+target/
+fuzz/target/
+fuzz/artifacts/
+apps/pluton/target/
+apps/pluton/web/pkg/
+apps/pluton/android/app/build/
+apps/pluton/android/build/
+dist/
+
+# Chain state and databases kept inside the checkout. `--data-dir ./wrkz-rust`,
+# `--state ./wrkz-rust/state`, `--data-dir ./wrkz-sync0` and a copied C++
+# `data-20260909/DB` are the shapes these take in practice.
+/DB/
+/data/
+data-*/
+wrkz-*/
+state/
+state-full/
+*.db
+ipc-*
+
+# Wallets, keys and anything with a secret in it.
+*.wallet
+*.wallet.keys
+*.keys
+.env*
+
+# Logs a run leaves behind.
+*.log
+
+# Of .git, only what build.rs reads to name the commit in --version.
+.git/*
+!.git/HEAD
+!.git/refs
+!.git/packed-refs
+
+# Agent worktrees, which are checkouts of this repository inside it.
+.claude/

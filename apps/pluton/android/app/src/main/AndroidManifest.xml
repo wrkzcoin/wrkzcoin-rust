@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Copyright (c) 2026, The WrkzCoin developers
+
+  Please see the included LICENSE file for more information
+
+  Rust Pluton Wallet is a NativeActivity: the whole app is the Rust library,
+  which draws the window and runs the wallet. `hasCode="false"` says there is
+  no Java of our own; the small helper Slint's Android backend needs is
+  compiled into the library itself.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Talking to a node, and nothing else: no camera, no contacts, no
+         storage outside the app's own private folder. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:label="Pluton"
+        android:hasCode="false"
+        android:allowBackup="false"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+
+        <activity
+            android:name="android.app.NativeActivity"
+            android:exported="true"
+            android:configChanges="orientation|keyboardHidden|screenSize|screenLayout|density|uiMode"
+            android:windowSoftInputMode="adjustResize"
+            android:launchMode="singleTask">
+
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="rust_pluton_wallet" />
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

@@ -1,0 +1,30 @@
+[package]
+name = "wrkz-service"
+description = "WrkzCoin JSON-RPC wallet service: the method set of the C++ wrkz-service (src/walletservice), served over /json_rpc on top of the Rust wallet core (spec/09, spec/10)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+# The wallet core and its front-end plumbing: the container, the synchronizer,
+# transaction construction, and the daemon factory `wrkz-wallet-api` uses.
+wrkz-wallet = { workspace = true }
+# The HTTP/1.1 reader and writer, the JSON value type and the request limits
+# the daemon and `wrkz-wallet-api` use, so this is not a third HTTP server.
+wrkz-rpc = { workspace = true }
+wrkz-primitives = { workspace = true }
+# `cn_slow_hash_v0` over the RPC password, which is how the C++ compares it.
+wrkz-pow = { workspace = true }
+hex = { workspace = true }
+serde_json = { workspace = true }
+zeroize = { workspace = true }
+
+[[bin]]
+name = "wrkz-service"
+path = "src/bin/service.rs"
+
+[lints]
+workspace = true

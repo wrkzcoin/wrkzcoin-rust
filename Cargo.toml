@@ -1,0 +1,102 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/wrkz-pow",
+    "crates/wrkz-pow-ref",
+    "crates/wrkz-primitives",
+    "crates/wrkz-p2p",
+    "crates/wrkz-wallet",
+    "crates/wrkz-storage",
+    "crates/wrkz-chain",
+    "crates/wrkz-mempool",
+    "crates/wrkz-node",
+    "crates/wrkz-rpc",
+    "crates/wrkz-service",
+    "crates/wrkz-txpow-server",
+]
+# Rust Pluton Wallet is its own workspace: it pulls in a GUI toolkit, and it
+# builds for Android and the browser, neither of which the programs here do.
+# Being outside the workspace, it cannot use the tables below and names its own
+# dependency versions; `scripts/ci.sh` lints and tests it separately.
+exclude = ["apps/pluton"]
+
+[workspace.package]
+version = "1.0.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/wrkzcoin/wrkzcoin-rust"
+# Built from this repository, never published to crates.io. deny.toml's
+# `licenses.private` relies on it to leave the workspace's own crates alone.
+publish = false
+# The toolchain the releases are built and tested with. This is not a floor
+# found by bisection: it is the pin, and `scripts/release.sh` refuses to cut an
+# archive with a different compiler unless WRKZ_RUSTC says otherwise, so two
+# hosts building the same commit produce the same bytes.
+rust-version = "1.98"
+
+# One version per dependency, for the whole workspace. A member writes
+# `hex = { workspace = true }` and adds only the features it needs; a bump is
+# one line here instead of eleven across the crates.
+[workspace.dependencies]
+wrkz-chain = { path = "crates/wrkz-chain" }
+wrkz-mempool = { path = "crates/wrkz-mempool" }
+wrkz-p2p = { path = "crates/wrkz-p2p" }
+wrkz-pow = { path = "crates/wrkz-pow" }
+wrkz-pow-ref = { path = "crates/wrkz-pow-ref" }
+wrkz-primitives = { path = "crates/wrkz-primitives" }
+wrkz-rpc = { path = "crates/wrkz-rpc" }
+wrkz-service = { path = "crates/wrkz-service" }
+wrkz-storage = { path = "crates/wrkz-storage" }
+wrkz-wallet = { path = "crates/wrkz-wallet" }
+
+aes = "0.8"
+argon2 = { version = "0.6", default-features = false, features = ["alloc"] }
+cbc = { version = "0.1", features = ["alloc", "block-padding"] }
+cc = "1"
+flate2 = "1"
+getrandom = "0.3"
+groestl = { version = "0.11", default-features = false }
+hex = "0.4"
+hmac = "0.12"
+jh = { version = "0.2", default-features = false }
+js-sys = "0.3"
+keccak = "0.2"
+libc = "0.2"
+pbkdf2 = { version = "0.12", default-features = false }
+rocksdb = { version = "=0.22.0", default-features = false, features = ["zstd"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+skein = { version = "0.2", default-features = false }
+ureq = { version = "2", default-features = false }
+zeroize = { version = "1", features = ["alloc"] }
+zstd = { version = "0.13", default-features = false }
+
+# The lint policy, in one place instead of an attribute per function. Every
+# member opts in with `[lints] workspace = true`.
+[workspace.lints.clippy]
+# Consensus code mirrors C++ signatures argument for argument — `validateBlock`,
+# `validateTransaction`, `constructMinerTx` and the reward and template
+# builders all take a long list. Packing them into structs would hide which C++
+# parameter each one is, which is the opposite of what this port is for.
+too_many_arguments = "allow"
+
+[workspace.lints.rustdoc]
+# CI runs `cargo doc` with `-D warnings`; denying these here makes a plain
+# `cargo doc`, and an editor, agree with it instead of finding out on push.
+broken_intra_doc_links = "deny"
+private_intra_doc_links = "deny"
+
+[profile.release]
+opt-level = 3
+debug = 1
+
+# Vector tests hash whole blocks with CryptoNight; keep the hashing optimised even in
+# test builds. `"*"` covers dependencies only, so wrkz-pow (the Rust CryptoNight) is
+# named; the reference C of wrkz-pow-ref sets its own -O2 in its build script.
+[profile.dev.package."*"]
+opt-level = 2
+[profile.dev.package.wrkz-pow]
+opt-level = 3
+[profile.test]
+opt-level = 1

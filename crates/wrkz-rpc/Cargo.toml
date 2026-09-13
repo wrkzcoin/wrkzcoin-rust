@@ -1,0 +1,50 @@
+[package]
+name = "wrkz-rpc"
+description = "WrkzCoin daemon HTTP and JSON-RPC surface: every route of src/rpc/RpcServer.cpp, over a hand-written HTTP/1.1 server with no async runtime and no web framework (spec/09-rpc-and-wallet-sync.md)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+# Forwards to wrkz-chain's RocksDB engine, for a node that serves RPC off a
+# persistent state. Every test here runs on `wrkz_storage::MemStore`.
+rocksdb = ["wrkz-storage/rocksdb", "wrkz-chain/rocksdb"]
+# Offer `Content-Encoding: zstd` to clients that ask for it, ahead of gzip.
+# Off by default and deliberately: flate2's default backend is miniz_oxide,
+# pure Rust, while the zstd crate compiles C. A C++ daemon does not speak zstd
+# either (cpp-httplib negotiates gzip only), so this helps only a client that
+# is also ours - our wallet, built with its own `zstd` feature.
+zstd = ["dep:zstd"]
+
+[dependencies]
+wrkz-chain = { workspace = true }
+wrkz-mempool = { workspace = true }
+# Only for `wrkz_p2p::bind`: binding the IPv6 listener with IPV6_V6ONLY set,
+# which `std::net` cannot express. Nothing else of the P2P crate is used here.
+wrkz-p2p = { workspace = true }
+wrkz-pow = { workspace = true }
+wrkz-primitives = { workspace = true }
+wrkz-storage = { workspace = true }
+getrandom = { workspace = true }
+hex = { workspace = true }
+# Response compression: gzip when the client sends `Accept-Encoding: gzip`, as
+# the C++ does through cpp-httplib when it is built with zlib. The default
+# backend is miniz_oxide, pure Rust, so this needs no C library.
+flate2 = { workspace = true }
+zstd = { workspace = true, optional = true }
+
+# The IPC socket (`src/ipc.rs`): the process umask around the bind and the
+# group lookup, neither of which `std` exposes.
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[[bin]]
+name = "wrkz-rpc-diff"
+path = "src/bin/diff.rs"
+
+[lints]
+workspace = true

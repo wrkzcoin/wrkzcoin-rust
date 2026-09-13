@@ -1,0 +1,13 @@
+# Text is stored with LF. Scripts and Dockerfiles keep LF in a Windows checkout
+# as well, so that checkout can be mounted into the Dockerfile.cross container
+# and run there; and git in that container, which has no core.autocrlf, then
+# sees the other files as unchanged instead of modified (scripts/release.sh
+# refuses a dirty tree).
+* text=auto
+*.sh text eol=lf
+Dockerfile* text eol=lf
+# Binary data: the fuzz seed corpora, the compiled checkpoints and the test
+# wallets. Git's own guess gets these right today, but a short input with no
+# control bytes would be taken for text and have its line endings rewritten.
+*.bin binary
+*.wallet binary

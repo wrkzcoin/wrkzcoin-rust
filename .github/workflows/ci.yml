@@ -1,0 +1,157 @@
+# CI: the same pass as scripts/ci.sh, which also runs it by hand.
+#
+# The jobs are split so they run in parallel and so a failure names itself:
+# `fmt` is rustfmt; `test` is clippy, the release tests and the docs; `pluton`
+# is Rust Pluton Wallet; `rocksdb` is the RocksDB engine and the programs that
+# need it; `debug` is the tests with debug assertions and overflow checks on;
+# `fuzz` proves the libFuzzer targets still build and gives each a short run;
+# `deny` is the advisory and licence audit; `cross` builds the platforms this
+# Linux runner is the only host for.
+name: ci
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+# No job writes to the repository; the token only needs to read it.
+permissions:
+  contents: read
+env:
+  # The toolchain a release is cut with (scripts/release.sh checks the same
+  # value, and the workspace's `rust-version` names it). Pinned rather than
+  # `stable`, because rustfmt's output and clippy's lint set both move between
+  # releases, and CI that drifts is CI that passes on a different compiler
+  # from the one the binaries are built with.
+  WRKZ_RUSTC: 1.98.1
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal \
+            --default-toolchain "$WRKZ_RUSTC" -c rustfmt
+      - name: fmt
+        run: scripts/ci.sh fmt
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal \
+            --default-toolchain "$WRKZ_RUSTC" -c clippy
+      - name: ci
+        run: scripts/ci.sh clippy tests docs
+  pluton:
+    # Slint finds system fonts through fontique, which links fontconfig, so the
+    # desktop build needs its development package; Dockerfile.pluton installs
+    # the same. The other packages are what that image builds Pluton with.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang libclang-dev cmake pkg-config libfontconfig-dev
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal \
+            --default-toolchain "$WRKZ_RUSTC" -c clippy
+      - name: pluton
+        run: scripts/ci.sh pluton
+  rocksdb:
+    # The RocksDB bindings need libclang, and RocksDB itself a C++ compiler and
+    # cmake. Its own job because librocksdb-sys is the longest build in the
+    # tree, and beside everything `test` builds it risks the runner's disk.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang libclang-dev cmake pkg-config
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal \
+            --default-toolchain "$WRKZ_RUSTC" -c clippy
+      - name: rocksdb
+        run: scripts/ci.sh rocksdb
+  debug:
+    # The release profile turns `debug_assert!` and overflow checks off, so a
+    # release-only CI never runs either. This is the pass that does.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal \
+            --default-toolchain "$WRKZ_RUSTC"
+      - name: tests
+        run: |
+          . "$HOME/.cargo/env"
+          cargo test --workspace --locked
+  fuzz:
+    # `fuzz/` has targets for every parser that reads bytes from a peer, a
+    # daemon or a file, and until now nothing checked they still compile. A
+    # short run each is not a fuzzing campaign — that is a machine left
+    # running, scripts/fuzz.sh — but it catches a target that rotted and a
+    # crash reachable in the first few thousand inputs.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal \
+            --default-toolchain nightly
+          . "$HOME/.cargo/env"
+          cargo install cargo-fuzz --locked
+      - name: smoke
+        run: |
+          . "$HOME/.cargo/env"
+          for target in $(cargo fuzz list --fuzz-dir fuzz); do
+            echo "== $target =="
+            cargo fuzz run --fuzz-dir fuzz "$target" -- -runs=20000 -max_total_time=120
+          done
+  deny:
+    # Advisories, yanked crates and licences over the whole dependency tree.
+    # This is a coin; a dependency with a published advisory should stop a
+    # push, not be found later.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal \
+            --default-toolchain "$WRKZ_RUSTC"
+          . "$HOME/.cargo/env"
+          cargo install cargo-deny --locked
+      - name: deny
+        run: |
+          . "$HOME/.cargo/env"
+          cargo deny --workspace --all-features check
+  cross:
+    # The Unix-only and platform-only code the jobs above never compile:
+    # macOS (both architectures), arm64 Linux and Windows, built from this
+    # Linux runner with scripts/cross.sh. `-D warnings` fails on a rustc lint
+    # in this workspace's crates (dependencies keep their capped lints) — the
+    # kind of warning that once reached only a Linux clippy run. RocksDB and
+    # Android are left out: the first needs the cross toolchains proven on the
+    # Ubuntu host, the second a 700 MB NDK per run.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: toolchains
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal \
+            --default-toolchain "$WRKZ_RUSTC"
+          WRKZ_CROSS="windows macos linux-arm64" scripts/cross-setup.sh
+      - name: build
+        env:
+          RUSTFLAGS: -D warnings
+        run: |
+          for target in aarch64-apple-darwin x86_64-apple-darwin aarch64-unknown-linux-gnu x86_64-pc-windows-gnu; do
+            scripts/cross.sh "$target" --locked -p wrkz-node -p wrkz-wallet -p wrkz-service --bins
+          done

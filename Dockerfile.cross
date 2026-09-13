@@ -1,0 +1,49 @@
+# A Linux build host for every release target: the node, the import tool and
+# the wallets for Linux (x86_64, arm64), Windows, macOS and Android, built by
+# scripts/release.sh. The image holds only toolchains — the source is mounted
+# — so one image builds every commit.
+#
+#   docker build -f Dockerfile.cross -t wrkz-cross .
+#   docker run --rm -v "$PWD":/src -v wrkz-cargo:/usr/local/cargo/registry \
+#       -u "$(id -u):$(id -g)" wrkz-cross scripts/release.sh
+#
+# That is every platform; name some to build only those:
+#   docker run ...same... wrkz-cross scripts/release.sh windows macos
+# (linux, windows, macos, android). The archives — wrkzcoin-cli-<version>-
+# <commit>-<os>-<arch>.zip for Windows, .tar.gz for the rest — and SHA256SUMS
+# land in ./dist, owned by you. The wrkz-cargo volume keeps the downloaded
+# crates between runs.
+#
+# From PowerShell with Docker Desktop: no -u, and the build tree in a volume,
+# since compiling onto a Windows drive through the mount is far slower:
+#   docker run --rm -v "${PWD}:/src" -v wrkz-cargo:/usr/local/cargo/registry `
+#       -v wrkz-target:/src/target wrkz-cross bash scripts/release.sh
+# The checkout needs the repository's .gitattributes in effect (LF scripts).
+#
+# A subset of the toolchains: docker build --build-arg WRKZ_CROSS="windows macos" ...
+# (the Linux x86_64 build needs zig, which comes with macos or linux-arm64).
+
+FROM ubuntu:24.04
+ARG WRKZ_CROSS="windows macos linux-arm64 android"
+# WRKZ_HOST_ZIG: Linux x86_64 is linked by zig against glibc 2.28 like arm64,
+# not against this image's 2.39, so it also runs on older distributions.
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    WRKZ_TOOLS=/opt/wrkz-cross \
+    WRKZ_HOST_ZIG=1 \
+    PATH=/opt/wrkz-cross/bin:/usr/local/cargo/bin:$PATH
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl \
+ && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --no-modify-path \
+ && rm -rf /var/lib/apt/lists/*
+COPY scripts/cross-setup.sh /tmp/cross-setup.sh
+# The registry cache is emptied from the image, and cargo and rustup are made
+# writable so that a build run as the calling user (-u) can fetch crates. The
+# empty registry directory stays: a new volume mounted on it takes its
+# permissions, so the calling user can write there too.
+RUN WRKZ_CROSS="$WRKZ_CROSS" /tmp/cross-setup.sh \
+ && rm -rf /var/lib/apt/lists/* "$CARGO_HOME/registry" /tmp/cross-setup.sh \
+ && mkdir "$CARGO_HOME/registry" \
+ && chmod -R a+w "$CARGO_HOME" "$RUSTUP_HOME" \
+ && git config --system --add safe.directory /src
+WORKDIR /src
