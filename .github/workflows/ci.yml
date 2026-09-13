@@ -6,7 +6,7 @@
 # need it; `debug` is the tests with debug assertions and overflow checks on;
 # `fuzz` proves the libFuzzer targets still build and gives each a short run;
 # `deny` is the advisory and licence audit; `cross` builds the platforms this
-# Linux runner is the only host for.
+# Linux runner is the only host for. audit.yml runs `deny` weekly as well.
 name: ci
 on:
   push:
@@ -15,18 +15,25 @@ on:
 # No job writes to the repository; the token only needs to read it.
 permissions:
   contents: read
+# A newer push to a pull request makes its older run moot. Pushes to a branch
+# are grouped by commit, so every commit on main keeps its own result.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
 env:
   # The toolchain a release is cut with (scripts/release.sh checks the same
   # value, and the workspace's `rust-version` names it). Pinned rather than
   # `stable`, because rustfmt's output and clippy's lint set both move between
   # releases, and CI that drifts is CI that passes on a different compiler
-  # from the one the binaries are built with.
+  # from the one the binaries are built with. The runner image is pinned for
+  # the same reason.
   WRKZ_RUSTC: 1.98.1
 jobs:
   fmt:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: toolchain
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal \
@@ -34,9 +41,10 @@ jobs:
       - name: fmt
         run: scripts/ci.sh fmt
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: toolchain
         run: |
           sudo apt-get update
@@ -49,9 +57,10 @@ jobs:
     # Slint finds system fonts through fontique, which links fontconfig, so the
     # desktop build needs its development package; Dockerfile.pluton installs
     # the same. The other packages are what that image builds Pluton with.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: toolchain
         run: |
           sudo apt-get update
@@ -64,9 +73,10 @@ jobs:
     # The RocksDB bindings need libclang, and RocksDB itself a C++ compiler and
     # cmake. Its own job because librocksdb-sys is the longest build in the
     # tree, and beside everything `test` builds it risks the runner's disk.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: toolchain
         run: |
           sudo apt-get update
@@ -78,9 +88,10 @@ jobs:
   debug:
     # The release profile turns `debug_assert!` and overflow checks off, so a
     # release-only CI never runs either. This is the pass that does.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: toolchain
         run: |
           sudo apt-get update
@@ -97,9 +108,10 @@ jobs:
     # short run each is not a fuzzing campaign — that is a machine left
     # running, scripts/fuzz.sh — but it catches a target that rotted and a
     # crash reachable in the first few thousand inputs.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: toolchain
         run: |
           sudo apt-get update
@@ -119,9 +131,10 @@ jobs:
     # Advisories, yanked crates and licences over the whole dependency tree.
     # This is a coin; a dependency with a published advisory should stop a
     # push, not be found later.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: toolchain
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal \
@@ -140,9 +153,10 @@ jobs:
     # kind of warning that once reached only a Linux clippy run. RocksDB and
     # Android are left out: the first needs the cross toolchains proven on the
     # Ubuntu host, the second a 700 MB NDK per run.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: toolchains
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal \

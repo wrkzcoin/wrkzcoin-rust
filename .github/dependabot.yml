@@ -1,0 +1,36 @@
+# Weekly dependency updates, grouped so a week's minor and patch bumps arrive
+# as one pull request per manifest. Every pull request still runs ci.yml,
+# whose `deny` job checks what a bump pulls in.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      cargo:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      # Pinned with `=` in Cargo.toml; bump it by hand.
+      - dependency-name: rocksdb
+  - package-ecosystem: cargo
+    directory: /apps/pluton
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      pluton:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      # Pinned with `=` in apps/pluton/Cargo.toml; bump them by hand.
+      - dependency-name: "slint*"
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

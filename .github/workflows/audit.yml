@@ -1,0 +1,29 @@
+# The dependency audit, weekly. Advisories are published against crates this
+# tree already locks, so a quiet week without a push must not also be a week
+# without the check. The same job as `deny` in ci.yml; run it by hand from the
+# Actions tab too.
+name: audit
+on:
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  WRKZ_RUSTC: 1.98.1
+jobs:
+  deny:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - name: toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal \
+            --default-toolchain "$WRKZ_RUSTC"
+          . "$HOME/.cargo/env"
+          cargo install cargo-deny --locked
+      - name: deny
+        run: |
+          . "$HOME/.cargo/env"
+          cargo deny --workspace --all-features check
