@@ -193,6 +193,6 @@ code grew from — the CryptoNote developers and the Bytecoin developers
 under the same notices and each file's header; its argon2 is MIT
 ([`crates/wrkz-pow-ref/c/argon2/LICENSE`](crates/wrkz-pow-ref/c/argon2/LICENSE)).
 
-Rust Pluton Wallet draws with [Slint](https://slint.dev) under Slint's
-royalty-free licence, which asks that the application show the "About Slint"
-notice; Pluton's About page does.
+Rust Pluton Wallet draws with [Slint](https://slint.dev), used under Slint's
+GPL-3.0 licence, so a Pluton build is distributed under GPL-3.0; its About page
+credits Slint.

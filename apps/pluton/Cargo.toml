@@ -30,8 +30,9 @@ wrkz-primitives = { path = "../../crates/wrkz-primitives" }
 wrkz-pow = { path = "../../crates/wrkz-pow" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# Slint under its royalty-free licence, which asks that the application show
-# the "About Slint" notice — Pluton's About screen does.
+# Slint under its GPL-3.0 licence (Slint is GPL-3.0-only OR its own royalty-free
+# and commercial licences), like the rest of this repository, so a Pluton build
+# is GPL-3.0. The About screen still shows the "About Slint" notice, as credit.
 # `renderer-software` is the fallback where OpenGL is missing or broken (an
 # old virtual machine, a locked-down desktop): SLINT_BACKEND=winit-software
 # then draws without the GPU. It is also what a headless screenshot uses.
