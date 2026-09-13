@@ -42,7 +42,7 @@ slint = { version = "=1.17.1", default-features = false, features = ["compat-1-2
 [target.'cfg(not(any(target_os = "android", target_family = "wasm")))'.dependencies]
 slint = { version = "=1.17.1", default-features = false, features = ["backend-winit"] }
 wrkz-wallet = { path = "../../crates/wrkz-wallet", default-features = false, features = ["native"] }
-dirs = "6"
+dirs = "7"
 
 # Android: the same native transport, with the activity backend.
 [target.'cfg(target_os = "android")'.dependencies]
