@@ -51,7 +51,7 @@ wrkz-service = { path = "crates/wrkz-service" }
 wrkz-storage = { path = "crates/wrkz-storage" }
 wrkz-wallet = { path = "crates/wrkz-wallet" }
 
-aes = "0.8"
+aes = "0.9"
 argon2 = { version = "0.6", default-features = false, features = ["alloc"] }
 cbc = { version = "0.1", features = ["alloc", "block-padding"] }
 cc = "1"
