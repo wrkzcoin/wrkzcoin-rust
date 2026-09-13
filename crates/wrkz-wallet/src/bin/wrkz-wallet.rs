@@ -228,6 +228,9 @@ fn main() -> ExitCode {
 
     println!("{}\n", version_line());
 
+    // Ctrl-C, SIGTERM and SIGHUP save the open wallet before the program ends.
+    cli::save_on_signal();
+
     let mut terminal = term::StdTerminal::default();
     let code = cli::run(&mut terminal, &config);
     wrkz_rpc::log::flush_file();

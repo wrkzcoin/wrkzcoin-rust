@@ -21,7 +21,6 @@
 //! listener that could not bind — the `exit(1)`s of
 //! `walletapi/ParseArguments.cpp` and `ApiDispatcher::start`.
 
-use std::io::BufRead;
 use std::process::ExitCode;
 use std::sync::Arc;
 
@@ -333,11 +332,12 @@ fn main() -> ExitCode {
         println!("Failed to start IPC API server: {e}");
     }
 
+    // Ctrl-C, SIGTERM (systemd, `docker stop`) and SIGHUP end the program the
+    // way `exit` does, so the wallet below is saved rather than lost.
+    wrkz_rpc::signal::install();
     if !no_console {
         println!("Type exit to save and shutdown.");
-        let stdin = std::io::stdin();
-        for line in stdin.lock().lines() {
-            let Ok(line) = line else { break };
+        for line in wrkz_rpc::signal::stdin_lines() {
             match line.trim() {
                 "exit" | "quit" => break,
                 "help" => println!("Type exit to save and shutdown."),
@@ -345,10 +345,8 @@ fn main() -> ExitCode {
             }
         }
     } else {
-        // Nothing to read; park until the process is signalled.
-        loop {
-            std::thread::sleep(std::time::Duration::from_millis(250));
-        }
+        // Nothing to read; wait for a signal.
+        wrkz_rpc::signal::wait_for_stop();
     }
 
     println!("\nSaving and shutting down...\n");

@@ -158,6 +158,34 @@ impl Default for ZedConfig {
     }
 }
 
+/// The wallet a stop signal saves, once one is open ([`save_on_signal`]).
+static OPEN_WALLET: std::sync::Mutex<Option<menu::SharedWallet>> = std::sync::Mutex::new(None);
+
+/// Save the open wallet and end the process on Ctrl-C, SIGTERM or SIGHUP, as
+/// `exit` does; `zedwallet++` installs the same handler (`ZedWallet.cpp`).
+///
+/// The binary calls this. [`run`] only records which wallet is open, so a test
+/// that drives [`run`] keeps its own Ctrl-C. The save takes the wallet lock, so
+/// a send or a sync step already under way finishes first.
+pub fn save_on_signal() {
+    wrkz_rpc::signal::install();
+    std::thread::spawn(|| {
+        wrkz_rpc::signal::wait_for_stop();
+        let open_wallet = OPEN_WALLET.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+        let mut code = 0;
+        if let Some(wallet) = open_wallet {
+            println!("{}", term::information("\nSaving and shutting down..."));
+            let open = wallet.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Err(e) = open.save() {
+                println!("{}", term::warning(format!("Failed to save wallet! Error: {e}")));
+                code = 1;
+            }
+        }
+        wrkz_rpc::log::flush_file();
+        std::process::exit(code);
+    });
+}
+
 /// The whole program: the opening menu, then the wallet loop.
 ///
 /// Returns the process exit code: `0` normally, `1` when the wallet could not
@@ -169,6 +197,8 @@ pub fn run(term: &mut dyn term::Terminal, config: &ZedConfig) -> u8 {
             0
         }
         menu::Launch::Open { wallet, sync } => {
+            *OPEN_WALLET.lock().unwrap_or_else(std::sync::PoisonError::into_inner) =
+                Some(std::sync::Arc::clone(&wallet));
             let mut sync_thread = menu::SyncThread::start(std::sync::Arc::clone(&wallet));
 
             if sync {

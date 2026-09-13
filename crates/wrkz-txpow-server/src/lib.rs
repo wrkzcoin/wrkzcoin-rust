@@ -17,14 +17,14 @@
 //! - [`api`] — the routes, the API key, the rate limits, CORS (`HttpApi.cpp`).
 //! - [`serve`] — the listeners and the connection workers.
 //! - [`log`] — levelled log lines to the console and optionally a file.
-//! - [`signal`] — Ctrl-C and SIGTERM.
+//!
+//! Ctrl-C and SIGTERM are `wrkz_rpc::signal`, which the wallet programs share.
 
 pub mod api;
 pub mod config;
 pub mod log;
 pub mod serve;
 pub mod service;
-pub mod signal;
 
 /// The release, as every program here numbers it.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

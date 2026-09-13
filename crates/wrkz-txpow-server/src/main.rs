@@ -16,12 +16,13 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
 
+use wrkz_rpc::signal;
 use wrkz_txpow_server::api::{Api, ApiConfig};
 use wrkz_txpow_server::config::{parse_arguments, Parsed, USAGE};
 use wrkz_txpow_server::log::{Level, Logger};
 use wrkz_txpow_server::serve::{self, ServeConfig};
 use wrkz_txpow_server::service::{Limits, PowService};
-use wrkz_txpow_server::{signal, version_line};
+use wrkz_txpow_server::version_line;
 
 fn main() -> ExitCode {
     let config = match parse_arguments(std::env::args().skip(1)) {

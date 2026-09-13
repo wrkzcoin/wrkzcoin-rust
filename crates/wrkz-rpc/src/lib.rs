@@ -27,6 +27,8 @@
 //! - [`diff`] / [`probe`] — the structural comparison behind `wrkz-rpc-diff`.
 //! - [`notify`] — the `--*-notify` hook runner the daemon, `wrkz-wallet-api`
 //!   and `wrkz-service` share (`common/Notifier.cpp`).
+//! - [`signal`] — Ctrl-C, SIGTERM and SIGHUP for the programs that are not the
+//!   daemon, and the console they read while they wait for one.
 //!
 //! # Field order
 //!
@@ -227,6 +229,7 @@ pub mod node;
 pub mod notify;
 pub mod probe;
 pub mod server;
+pub mod signal;
 pub mod sync_cache;
 
 pub use api::{ApiError, NodeApi};

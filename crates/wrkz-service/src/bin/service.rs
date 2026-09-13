@@ -199,11 +199,12 @@ fn run() -> Result<i32, String> {
     log_info(format_args!("JSON-RPC server started on {where_}"));
 
     // The same shutdown `wrkz-wallet-api` has: `exit` at a terminal, and with
-    // no terminal (systemd, a container) park until the process is signalled.
+    // no terminal (systemd, a container) a wait. Ctrl-C, SIGTERM and SIGHUP end
+    // either the way `exit` does, so the container is saved below.
+    wrkz_rpc::signal::install();
     if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
         println!("Type exit to save and shut down.");
-        for line in std::io::BufRead::lines(std::io::stdin().lock()) {
-            let Ok(line) = line else { break };
+        for line in wrkz_rpc::signal::stdin_lines() {
             match line.trim() {
                 "exit" | "quit" | "stop" => break,
                 "save" => match state.read().save() {
@@ -224,8 +225,8 @@ fn run() -> Result<i32, String> {
             }
         }
     } else {
-        while !state.stopping.load(std::sync::atomic::Ordering::SeqCst) {
-            std::thread::sleep(std::time::Duration::from_millis(250));
+        while !state.stopping.load(std::sync::atomic::Ordering::SeqCst) && !wrkz_rpc::signal::stop_requested() {
+            std::thread::sleep(wrkz_rpc::signal::POLL);
         }
     }
 
