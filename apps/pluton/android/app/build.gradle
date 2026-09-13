@@ -74,7 +74,8 @@ tasks.register('warnAboutDebugSigning') {
         if (!hasOwnKey) {
             logger.warn('')
             logger.warn('  The release APK was signed with the DEBUG key, because PLUTON_KEYSTORE is not set.')
-            logger.warn('  It installs and runs, but do not publish it. See docs/PLUTON.md.')
+            logger.warn('  It installs and runs, but do not publish it. To sign with your own key, set')
+            logger.warn('  PLUTON_KEYSTORE, PLUTON_KEYSTORE_PASSWORD, PLUTON_KEY_ALIAS and PLUTON_KEY_PASSWORD.')
             logger.warn('')
         }
     }

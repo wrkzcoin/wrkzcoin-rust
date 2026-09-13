@@ -368,8 +368,7 @@ pub fn render_storage_stats(stats: &[TableStats], top_index: u32, on_disk_bytes:
          payload row is the same records at the size the .litesnap file holds them,\n\
          over whole tables as the C++ measures them. (derived) rows are rebuilt by an\n\
          import, (lite drops) are never kept below a lite height, and (import drops) are\n\
-         what a node imported from a snapshot does not have below its height. See\n\
-         docs/DAEMON.md, \"Lite node snapshots\".\n\n",
+         what a node imported from a snapshot does not have below its height.\n\n",
     );
     out
 }

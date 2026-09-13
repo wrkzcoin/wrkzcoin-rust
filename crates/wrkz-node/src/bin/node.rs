@@ -84,7 +84,7 @@ wrkz-node attach SOCKET      a console for a daemon already running here, over
   --load-checkpoints VALUE   'default' (the compiled-in table), a CSV file of
                              index,hash lines that replaces it, or '' for none
 
-  Maintenance (once, before the node starts; see docs/DAEMON.md)
+  Maintenance (once, before the node starts)
   --resync                   delete the chain state and the peer state (the
                              ban list is kept), then sync from the network
   --rewind-to-height N       remove every block from height N up, at most
@@ -101,7 +101,7 @@ wrkz-node attach SOCKET      a console for a daemon already running here, over
                              to check work and signatures below the last
                              checkpoint too
 
-  Node modes (see docs/DAEMON.md)
+  Node modes
   --prune                    enable pruned-node mode for daemon sync behavior
   --prune-depth N            when prune mode is enabled, retain at least this
                              many recent blocks locally (default 10080; a
@@ -213,7 +213,7 @@ wrkz-node attach SOCKET      a console for a daemon already running here, over
                              recent: /getrandom_outs favours recent outputs,
                              as real spends do
 
-  Mining (see docs/DAEMON.md)
+  Mining
   --stratum-bind-port PORT   serve a stratum server on PORT, so a stock miner
                              (xmrig, ...) mines straight to this node. 0, the
                              default, leaves it off
@@ -225,7 +225,7 @@ wrkz-node attach SOCKET      a console for a daemon already running here, over
   --stratum-max-connections N
                              miners allowed at once (default 32)
 
-  Integration (see docs/DAEMON.md)
+  Integration
   --zmq-pub ADDRESS          publish blocks, reorganisations and pool changes
                              on a ZMQ PUB socket, tcp://host:port or ipc://path
                              (default tcp://127.0.0.1:17857; empty is off)
@@ -239,7 +239,7 @@ wrkz-node attach SOCKET      a console for a daemon already running here, over
   --notify-during-sync       announce during the initial sync too; by default
                              nothing is announced until the node is synced
 
-  Storage (only meaningful with --features rocksdb; see docs/DAEMON.md)
+  Storage (only meaningful with --features rocksdb)
   --db-threads N             background flush and compaction threads (8)
   --db-max-open-files N      RocksDB open file limit (4096; -1 is no limit)
   --db-read-buffer-size MB   read cache, row cache and block cache together
