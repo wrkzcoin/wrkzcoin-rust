@@ -449,7 +449,9 @@ fn a_height_bound_rejection_is_remembered_only_at_the_tip_it_was_judged_at() {
     let mut h = harness();
     let (_, blob, _) = build_spend(&h.outputs[0], &h.outputs[1], &h.payee, 1, b"cheap");
     let first = h.pool.add(&blob, &h.chain, PoolSource::Network);
-    let Some(rule @ TxRule::WrongFee { .. }) = first.rule().cloned() else { panic!("expected WRONG_FEE, got {first:?}") };
+    let Some(rule @ TxRule::WrongFee { .. }) = first.rule().cloned() else {
+        panic!("expected WRONG_FEE, got {first:?}")
+    };
     assert_eq!(first.category(), Some(RejectionCategory::InvalidAtHeight));
     assert!(!first.category().unwrap().is_peer_fault());
     assert_eq!(h.pool.add(&blob, &h.chain, PoolSource::Network), PoolStatus::CachedRejection(rule.clone()));
@@ -535,8 +537,8 @@ fn prepare_a_switch_onto_a_spending_branch(h: &mut Harness) -> (Hash, Vec<u8>) {
     let (_, rival, rival_hash) = build_spend(&h.outputs[0], &h.outputs[2], &h.miner, FEE, b"rival");
 
     let ctx = TemplateContext::from_chain(&h.chain).unwrap();
-    let main = build_template_from_context(&ctx, &[], FIXTURE_ADDRESS, 0, None, &options(TIP_TIME + 60, b"main"))
-        .unwrap();
+    let main =
+        build_template_from_context(&ctx, &[], FIXTURE_ADDRESS, 0, None, &options(TIP_TIME + 60, b"main")).unwrap();
     let (_, main_blob) = mine(&main.block, 1);
     let update = add_block_with_pool(&mut h.pool, &mut h.chain, &main_blob, &[]).unwrap();
     assert_eq!(update.outcome.status, AddStatus::Main);

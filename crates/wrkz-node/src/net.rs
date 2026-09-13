@@ -115,7 +115,11 @@ impl Inflow {
             if frames == 0 || (frames < INBOUND_FRAMES_PER_PEER && bytes < INBOUND_BYTES_PER_PEER) {
                 return true;
             }
-            w = self.room.wait_timeout(w, Duration::from_millis(500)).map(|(g, _)| g).unwrap_or_else(|p| p.into_inner().0);
+            w = self
+                .room
+                .wait_timeout(w, Duration::from_millis(500))
+                .map(|(g, _)| g)
+                .unwrap_or_else(|p| p.into_inner().0);
         }
     }
 
@@ -373,7 +377,13 @@ fn writer(mut conn: Connection, rx: Receiver<Out>, budget: &WriteBudget) {
 
 /// Pump frames to the engine until the socket errors, the peer is closed or
 /// the engine is gone. Returns why it stopped.
-fn reader(mut conn: Connection, id: ConnId, events: &SyncSender<Event>, inflow: &Arc<Inflow>, closed: &AtomicBool) -> String {
+fn reader(
+    mut conn: Connection,
+    id: ConnId,
+    events: &SyncSender<Event>,
+    inflow: &Arc<Inflow>,
+    closed: &AtomicBool,
+) -> String {
     loop {
         // Back-pressure per peer: while this peer has its share of the queue,
         // read nothing more, and let TCP slow it down.
@@ -481,11 +491,17 @@ pub fn spawn_outbound(
 
 /// Attach an accepted connection. Its `COMMAND_HANDSHAKE` arrives as an
 /// ordinary frame and the engine answers it (`handle_handshake`).
-pub fn attach_inbound(id: ConnId, stream: TcpStream, events: SyncSender<Event>, slot: InboundSlot) -> std::io::Result<()> {
+pub fn attach_inbound(
+    id: ConnId,
+    stream: TcpStream,
+    events: SyncSender<Event>,
+    slot: InboundSlot,
+) -> std::io::Result<()> {
     let conn = Connection::from_stream(stream, conn::IDLE_TIMEOUT)?;
     let addr = conn.peer_addr();
-    let announce =
-        |sink: &Sink| events.send(Event::Established { id, addr, incoming: true, sink: sink.clone(), handshake: None }).is_ok();
+    let announce = |sink: &Sink| {
+        events.send(Event::Established { id, addr, incoming: true, sink: sink.clone(), handshake: None }).is_ok()
+    };
     attach(conn, id, events.clone(), Some(slot), announce)?;
     Ok(())
 }
@@ -648,7 +664,10 @@ pub fn spawn_listener(
                     let slot = match admitted {
                         Ok(slot) => slot,
                         Err(reason) => {
-                            log_debug!("refusing inbound {}: {reason}", s.peer_addr().map_or("?".into(), |a| a.to_string()));
+                            log_debug!(
+                                "refusing inbound {}: {reason}",
+                                s.peer_addr().map_or("?".into(), |a| a.to_string())
+                            );
                             continue;
                         }
                     };

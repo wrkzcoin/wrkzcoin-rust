@@ -1029,10 +1029,7 @@ fn a_block_without_the_work_is_refused_before_its_transactions_are_checked() {
     let mut bad = build_spend(TIP, &h.outputs[0], &h.outputs[1], &h.payee, FEE, b"bad", None);
     bad.signatures[0][0][0] ^= 1;
     let b = plain_block(prev, TIP + 1, TIP_TIME + SPACING, 7, &[bad], &h.miner, b"b1");
-    assert!(matches!(
-        rule(h.chain.add_block(&b.blob, &b.tx_blobs).unwrap_err()),
-        Rule::ProofOfWorkTooWeak { .. }
-    ));
+    assert!(matches!(rule(h.chain.add_block(&b.blob, &b.tx_blobs).unwrap_err()), Rule::ProofOfWorkTooWeak { .. }));
 }
 
 #[test]

@@ -1069,10 +1069,7 @@ pub fn start(api: Arc<dyn NodeApi>, config: ServerConfig) -> std::io::Result<Run
     }
 
     if let Some(listener6) = listener6 {
-        threads.insert(
-            0,
-            spawn_acceptor(listener6, Arc::clone(&queue), Arc::clone(&stopping), Arc::clone(&admission)),
-        );
+        threads.insert(0, spawn_acceptor(listener6, Arc::clone(&queue), Arc::clone(&stopping), Arc::clone(&admission)));
     }
     threads.insert(0, spawn_acceptor(listener, Arc::clone(&queue), Arc::clone(&stopping), Arc::clone(&admission)));
     #[cfg(unix)]

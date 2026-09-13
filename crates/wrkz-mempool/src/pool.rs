@@ -1359,7 +1359,8 @@ mod tests {
             h
         };
         let mut tx = Transaction::default();
-        tx.prefix.inputs = (0..inputs).map(|i| Input::Key { amount: 1, key_offsets: vec![1], key_image: image(i) }).collect();
+        tx.prefix.inputs =
+            (0..inputs).map(|i| Input::Key { amount: 1, key_offsets: vec![1], key_image: image(i) }).collect();
         tx.prefix.outputs = (0..outputs).map(|_| wrkz_primitives::tx::Output { amount: 1, key: [0; 32] }).collect();
         let mut hash = image(0xff);
         hash[31] = 0xAA;

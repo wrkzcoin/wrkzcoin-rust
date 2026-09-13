@@ -2474,9 +2474,7 @@ mod tests {
                     c.outputs.0.get_mut(&(100_000, 4 * 2 + 1)).expect("a decoy").unlock_time = 9_000_000;
                     break_signature(tx, 6);
                 },
-                |_| {
-                    Err(Some(TxRule::InputSpendLockedOut { amount: 100_000, global_index: 9, unlock_time: 9_000_000 }))
-                },
+                |_| Err(Some(TxRule::InputSpendLockedOut { amount: 100_000, global_index: 9, unlock_time: 9_000_000 })),
             ),
             (
                 "a short signature vector",
@@ -2513,10 +2511,7 @@ mod tests {
                 "a fee below the ladder",
                 |tx, _| tx.prefix.outputs[0].amount = 8 * 100_000 - 1,
                 |_| {
-                    Err(Some(TxRule::WrongFee {
-                        fee: 1,
-                        minimum: wrkz_primitives::fees::required_minimum_fee(300, H),
-                    }))
+                    Err(Some(TxRule::WrongFee { fee: 1, minimum: wrkz_primitives::fees::required_minimum_fee(300, H) }))
                 },
             ),
             (

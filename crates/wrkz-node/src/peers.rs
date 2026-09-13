@@ -1076,8 +1076,7 @@ impl PeerManager {
             // Seeds are the bootstrap of last resort: only dialled when the
             // lists cannot fill the target, which is the "lists are empty or
             // the node is stuck" rule of spec/08.
-            let mut seeds: Vec<SocketAddr> =
-                self.seeds.iter().copied().filter(|a| self.dialable(*a, busy)).collect();
+            let mut seeds: Vec<SocketAddr> = self.seeds.iter().copied().filter(|a| self.dialable(*a, busy)).collect();
             rng.shuffle(&mut seeds);
             for a in seeds {
                 if out.len() >= want {
@@ -1382,8 +1381,9 @@ mod tests {
     fn one_group_cannot_flood_the_gray_list() {
         let now = 1_700_000_000;
         let mut pm = PeerManager::new(false);
-        let flood: Vec<PeerlistEntry> =
-            (0..MAX_PEERLIST_ENTRIES as u32).map(|i| e([45, 10, (i >> 8) as u8, i as u8], 17855, i as u64, now)).collect();
+        let flood: Vec<PeerlistEntry> = (0..MAX_PEERLIST_ENTRIES as u32)
+            .map(|i| e([45, 10, (i >> 8) as u8, i as u8], 17855, i as u64, now))
+            .collect();
         assert!(pm.merge_peerlist(&flood, now, now));
         assert_eq!(pm.gray_count(), GRAY_PER_GROUP_LIMIT);
         assert!(pm.merge_peerlist(&[e([46, 1, 0, 1], 17855, 1, now)], now, now));
@@ -1487,8 +1487,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let state = dir.join("p2pstate.wrkz.bin");
         let pm = PeerManager::open(&state, false, false);
-        let anchors: Vec<SocketAddr> =
-            ["45.10.0.1:17855", "[2a01:4f8::1]:17855", "46.1.0.1:1", "47.1.0.1:1"].iter().map(|s| s.parse().unwrap()).collect();
+        let anchors: Vec<SocketAddr> = ["45.10.0.1:17855", "[2a01:4f8::1]:17855", "46.1.0.1:1", "47.1.0.1:1"]
+            .iter()
+            .map(|s| s.parse().unwrap())
+            .collect();
         pm.save_anchors(&anchors).unwrap();
         pm.save_anchors(&[]).unwrap(); // an empty list keeps the last good one
         let mut back = PeerManager::open(&state, false, false);

@@ -1504,7 +1504,8 @@ impl<S: KvStore, P: TxPool> Node<S, P> {
     /// The outbound peers worth dialling first next time: handshaken, longest
     /// connected first, at most [`MAX_ANCHORS`].
     fn anchor_candidates(&self) -> Vec<SocketAddr> {
-        let mut outbound: Vec<&Peer> = self.peers.values().filter(|p| !p.ctx.incoming && p.ctx.handshake_done).collect();
+        let mut outbound: Vec<&Peer> =
+            self.peers.values().filter(|p| !p.ctx.incoming && p.ctx.handshake_done).collect();
         outbound.sort_by_key(|p| p.ctx.connected_at);
         outbound.iter().take(MAX_ANCHORS).map(|p| p.ctx.addr).collect()
     }
@@ -1807,7 +1808,8 @@ impl<S: KvStore, P: TxPool> Node<S, P> {
         // sends — and nothing else. The C++ dispatches everything regardless,
         // so a peer could relay blocks, pull the chain and set its height
         // without ever saying who it is.
-        let allowed_early = matches!((command, is_response), (msg::COMMAND_HANDSHAKE, false) | (msg::COMMAND_PING, false));
+        let allowed_early =
+            matches!((command, is_response), (msg::COMMAND_HANDSHAKE, false) | (msg::COMMAND_PING, false));
         if !handshaken && !allowed_early {
             let error = PeerError::offence(Offence::Unsolicited, format!("command {command} before the handshake"));
             return self.fail_peer(id, error);
@@ -2006,7 +2008,10 @@ impl<S: KvStore, P: TxPool> Node<S, P> {
         let peer = self.peers.get_mut(&id).ok_or("connection gone")?;
         if peer.sink.objects_in_flight() {
             if peer.ctx.deferred_objects_request.is_some() {
-                return Err(PeerError::offence(Offence::Unsolicited, "NOTIFY_REQUEST_GET_OBJECTS while two are unanswered"));
+                return Err(PeerError::offence(
+                    Offence::Unsolicited,
+                    "NOTIFY_REQUEST_GET_OBJECTS while two are unanswered",
+                ));
             }
             log_debug!("{}: get-objects request held until the previous answer is written", peer.ctx.label());
             peer.ctx.deferred_objects_request = Some(wanted);
@@ -2059,7 +2064,11 @@ impl<S: KvStore, P: TxPool> Node<S, P> {
                 Some((block, txs)) => {
                     let size = block.len() + txs.iter().map(|t| t.len()).sum::<usize>();
                     if !blocks.is_empty() && bytes + size > SERVE_OBJECTS_MAX_BYTES {
-                        log_warn!("conn {id} asked for {} blocks; answering with the first {}", wanted.len(), blocks.len());
+                        log_warn!(
+                            "conn {id} asked for {} blocks; answering with the first {}",
+                            wanted.len(),
+                            blocks.len()
+                        );
                         break;
                     }
                     bytes += size;
@@ -2819,9 +2828,14 @@ mod tests {
         assert_eq!(block_offence(&Rule::CoinbaseHasSignatures), Some(Offence::InvalidBlock));
         assert_eq!(block_offence(&Rule::TimestampTooFarInFuture { timestamp: 2, limit: 1 }), None);
         assert_eq!(block_offence(&Rule::WrongVersion { expected: 8, got: 7 }), None);
-        let signature = Rule::Transaction { hash: [0; 32], index: 0, rule: TxRule::InputInvalidSignatures { input: 0 } };
+        let signature =
+            Rule::Transaction { hash: [0; 32], index: 0, rule: TxRule::InputInvalidSignatures { input: 0 } };
         assert_eq!(block_offence(&signature), Some(Offence::InvalidBlock));
-        let spent = Rule::Transaction { hash: [0; 32], index: 0, rule: TxRule::InputKeyImageAlreadySpent { key_image: [0; 32] } };
+        let spent = Rule::Transaction {
+            hash: [0; 32],
+            index: 0,
+            rule: TxRule::InputKeyImageAlreadySpent { key_image: [0; 32] },
+        };
         assert_eq!(block_offence(&spent), None);
         assert_eq!(block_offence(&Rule::RejectedAsOrphaned), None);
     }

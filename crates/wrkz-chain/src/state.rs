@@ -3207,16 +3207,17 @@ mod tests {
             signatures: Vec::new(),
         };
         let (one, two, other) = (tx(1), tx(2), tx(3));
-        let block = BlockTemplate {
-            transaction_hashes: vec![one.hash().unwrap(), two.hash().unwrap()],
-            ..Default::default()
-        };
+        let block =
+            BlockTemplate { transaction_hashes: vec![one.hash().unwrap(), two.hash().unwrap()], ..Default::default() };
         let below = BLOCK_BLOB_SHUFFLE_CHECK_HEIGHT - 1;
         let refused = |r: Result<()>| r.unwrap_err().rule().cloned();
 
         assert!(check_transaction_list(&block, &[one.clone(), two.clone()], below, true).is_ok());
         let swapped = [one.clone(), other];
-        assert_eq!(refused(check_transaction_list(&block, &swapped, below, true)), Some(Rule::TransactionInconsistency));
+        assert_eq!(
+            refused(check_transaction_list(&block, &swapped, below, true)),
+            Some(Rule::TransactionInconsistency)
+        );
         let reordered = [two, one];
         assert_eq!(
             refused(check_transaction_list(&block, &reordered, below, true)),

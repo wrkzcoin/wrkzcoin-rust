@@ -861,7 +861,8 @@ fn a_body_that_is_not_json_is_a_400_with_the_cpp_message() {
     assert_eq!(res.status, 400);
     let message = body(&res).get("error").unwrap().as_str().unwrap().to_string();
     assert!(
-        message.ends_with(&format!("Body:\n{}...[3840 more bytes]Failed to parse request body as JSON", "x".repeat(256))),
+        message
+            .ends_with(&format!("Body:\n{}...[3840 more bytes]Failed to parse request body as JSON", "x".repeat(256))),
         "{message}"
     );
 
