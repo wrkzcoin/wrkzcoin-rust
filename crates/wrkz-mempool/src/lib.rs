@@ -54,6 +54,8 @@
 //! assert_eq!(&t.blob[t.reserved_offset as usize..][..8], &[0u8; 8]);
 //! ```
 
+#![forbid(unsafe_code)]
+
 pub mod chain;
 pub mod coinbase;
 pub mod pool;

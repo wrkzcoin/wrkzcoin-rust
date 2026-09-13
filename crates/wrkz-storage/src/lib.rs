@@ -23,6 +23,8 @@
 //! - `rocks` (feature `rocksdb`) — the engine, opened with the C++ options
 //!   (level compaction, ZSTD from level 2 down, bloom filters).
 
+#![forbid(unsafe_code)]
+
 pub mod batch;
 pub mod codec;
 pub mod counting;

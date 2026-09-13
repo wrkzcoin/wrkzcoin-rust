@@ -8,6 +8,8 @@
 //! See the crate documentation for the one difference that is not drop-in: the
 //! container is the modern `WalletBackend` format, not WalletGreen's.
 
+#![forbid(unsafe_code)]
+
 use std::sync::Arc;
 
 use wrkz_service::serve::{self, ServeConfig};

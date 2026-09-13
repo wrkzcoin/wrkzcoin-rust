@@ -62,6 +62,8 @@
 //! always writes. No password, key or request body is logged; a request is a
 //! debug line with its peer, path and status, and its method name.
 
+#![forbid(unsafe_code)]
+
 pub mod errors;
 pub mod methods;
 pub mod notify;

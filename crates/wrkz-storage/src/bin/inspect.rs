@@ -15,6 +15,8 @@
 //! of the last N non-coinbase transactions in range and verifies their ring
 //! signatures. Exit code 0 means every check passed.
 
+#![forbid(unsafe_code)]
+
 use std::path::PathBuf;
 use wrkz_primitives::block::BlockTemplate;
 use wrkz_primitives::constants::block_major_version_for_index;
