@@ -72,7 +72,7 @@ sha2 = "0.10"
 skein = { version = "0.2", default-features = false }
 ureq = { version = "2", default-features = false }
 zeroize = { version = "1", features = ["alloc"] }
-zstd = { version = "0.13", default-features = false }
+zstd = { version = "0.14", default-features = false }
 
 # The lint policy, in one place instead of an attribute per function. Every
 # member opts in with `[lints] workspace = true`.
