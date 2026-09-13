@@ -880,8 +880,9 @@ fn send_params(state: &ServiceState, p: &Json) -> Result<SendParams> {
     let open = state.read();
     let network_height = open.network_height();
     // `getDefaultMixin` reads the tier at the daemon's own top block, not at
-    // the height peers claim (`WalletService.cpp:2065`).
-    let default_mixin = wrkz_primitives::mixins::mixin_allowable_range(network_height).default;
+    // the height peers claim (`WalletService.cpp:2065`, as C++ `0b58b035` has it).
+    let daemon_height = open.daemon_height();
+    let default_mixin = wrkz_primitives::mixins::mixin_allowable_range(daemon_height).default;
     let mixin = opt_u64(p, "anonymity").unwrap_or(default_mixin);
 
     let sources = str_array(p, "addresses");
@@ -902,6 +903,7 @@ fn send_params(state: &ServiceState, p: &Json) -> Result<SendParams> {
         extra_data,
         send_all: false,
         network_height,
+        daemon_height,
         // The transaction proof of work is searched on every core the host has
         // when the fee escape does not apply; a service is not interactive and
         // has nothing better to do with them.

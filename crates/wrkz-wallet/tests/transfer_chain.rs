@@ -267,7 +267,7 @@ fn build(harness: &Harness, fee: FeeType, mixin: u64, pow_threads: usize) -> Pre
         pow_threads,
         // The whole balance minus the fee, so both inputs are spent and there
         // is change: two rings, several outputs.
-        ..SendParams::basic(&payee_address(), AMOUNT, "", u64::from(TIP))
+        ..SendParams::basic(&payee_address(), AMOUNT, "", u64::from(TIP), u64::from(TIP))
     };
     prepare_transaction(&harness.wallet, &daemon, &params, &mut SeededRandom::from_label(b"acceptance"))
         .expect("the wallet builds a transaction")
@@ -394,7 +394,8 @@ fn a_ring_of_one_is_below_the_tier_floor_from_4_300_000() {
     // built, and would be refused by the validator too.
     let harness = harness();
     let daemon = ChainDaemon { outputs: harness.outputs.clone() };
-    let params = SendParams { mixin: 0, ..SendParams::basic(&payee_address(), AMOUNT, "", u64::from(TIP)) };
+    let params =
+        SendParams { mixin: 0, ..SendParams::basic(&payee_address(), AMOUNT, "", u64::from(TIP), u64::from(TIP)) };
     let err = prepare_transaction(&harness.wallet, &daemon, &params, &mut SeededRandom::from_label(b"floor"))
         .expect_err("mixin 0 is below the tier");
     assert_eq!(err.code(), 21, "MIXIN_TOO_SMALL");

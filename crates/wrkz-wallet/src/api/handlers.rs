@@ -833,7 +833,7 @@ fn make_basic_transaction(state: &ApiState, body: &Json, send: bool) -> HandlerR
     let view = published(state)?;
     let params = SendParams {
         pow_threads: pow_threads(),
-        ..SendParams::basic(&destination, amount, &payment_id, view.network_height())
+        ..SendParams::basic(&destination, amount, &payment_id, view.network_height(), view.daemon_height())
     };
     build_and_maybe_send(state, &view, params, send)
 }
@@ -878,9 +878,12 @@ fn make_advanced_transaction(state: &ApiState, body: &Json, send: bool) -> Handl
 
     let view = published(state)?;
     let network_height = view.network_height();
+    // The default ring is the tier at the daemon's own top block, where its
+    // pool judges the transaction (`ApiDispatcher.cpp:1030`, C++ `0b58b035`).
+    let daemon_height = view.daemon_height();
     let params = SendParams {
         destinations,
-        mixin: mixin.unwrap_or_else(|| wrkz_primitives::mixins::mixin_allowable_range(network_height).default),
+        mixin: mixin.unwrap_or_else(|| wrkz_primitives::mixins::mixin_allowable_range(daemon_height).default),
         fee,
         payment_id,
         addresses_to_take_from: source_addresses,
@@ -889,6 +892,7 @@ fn make_advanced_transaction(state: &ApiState, body: &Json, send: bool) -> Handl
         extra_data,
         send_all: false,
         network_height,
+        daemon_height,
         pow_threads: pow_threads(),
     };
     build_and_maybe_send(state, &view, params, send)
@@ -998,7 +1002,7 @@ fn send_sweep_transaction(state: &ApiState, body: &Json, all: bool) -> HandlerRe
         &destination,
         &payment_id,
         amount,
-        view.network_height(),
+        view.daemon_height(),
         &mut random,
         &mut record,
     );

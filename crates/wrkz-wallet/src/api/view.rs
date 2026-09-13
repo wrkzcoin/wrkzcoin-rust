@@ -98,6 +98,13 @@ impl WalletView {
         self.status.network_block_count
     }
 
+    /// The daemon's own top block index, where its pool judges a transaction:
+    /// the height of the mixin tier and of the validation before a send
+    /// ([`crate::transfer::SendParams::daemon_height`]).
+    pub fn daemon_height(&self) -> u64 {
+        self.status.local_daemon_block_count
+    }
+
     /// `Nigel::liteStartHeight`.
     pub fn lite_start_height(&self) -> u64 {
         self.lite_start_height

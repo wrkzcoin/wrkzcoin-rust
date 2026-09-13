@@ -585,7 +585,7 @@ fn funded_wallet() -> Wallet {
 }
 
 fn base_params(amount: u64) -> SendParams {
-    SendParams { mixin: 1, ..SendParams::basic(&payee_address(), amount, "", HEIGHT) }
+    SendParams { mixin: 1, ..SendParams::basic(&payee_address(), amount, "", HEIGHT, HEIGHT) }
 }
 
 fn payee_address() -> String {
@@ -1011,7 +1011,7 @@ fn minimum_fee_below_the_proof_of_work_height() {
     let params = SendParams {
         mixin: 1,
         fee: FeeType::MinimumFee,
-        ..SendParams::basic(&payee_address(), 250_000, "", HEIGHT_NO_POW)
+        ..SendParams::basic(&payee_address(), 250_000, "", HEIGHT_NO_POW, HEIGHT_NO_POW)
     };
     let prepared = prepare(&wallet, &daemon, &params).expect("prepared");
 
@@ -1042,7 +1042,7 @@ fn a_fixed_fee_below_the_minimum_is_refused() {
     let params = SendParams {
         mixin: 1,
         fee: FeeType::FixedFee(1),
-        ..SendParams::basic(&payee_address(), 50_000, "", HEIGHT_NO_POW)
+        ..SendParams::basic(&payee_address(), 50_000, "", HEIGHT_NO_POW, HEIGHT_NO_POW)
     };
     assert_eq!(prepare(&wallet, &daemon, &params).unwrap_err().code(), 17);
 
@@ -1053,14 +1053,34 @@ fn a_fixed_fee_below_the_minimum_is_refused() {
 }
 
 #[test]
+fn the_ring_size_rules_are_the_daemons_not_the_networks() {
+    // One peer claiming a height past the mixin fork moves `/info`'s
+    // `network_height` past it, while the daemon's pool still judges at its own
+    // top block (C++ `0b58b035`). The default ring, and the validation of an
+    // explicit one, follow the daemon.
+    let fork = constants::MIXIN_LIMITS_V6_HEIGHT;
+    let params = SendParams::basic(&payee_address(), 50_000, "", fork + 10, fork - 10);
+    assert_eq!(params.mixin, constants::DEFAULT_MIXIN_V5);
+    assert_eq!(FusionParams::basic(fork + 10, fork - 10).mixin, constants::DEFAULT_MIXIN_V5);
+
+    let wallet = funded_wallet();
+    let daemon = MockDaemon::default();
+    let params = SendParams { mixin: constants::DEFAULT_MIXIN_V6, fee: FeeType::FixedFee(10_000), ..params };
+    assert_eq!(prepare(&wallet, &daemon, &params).unwrap_err().code(), 22, "MIXIN_TOO_BIG before the fork");
+}
+
+#[test]
 fn send_all_reduces_the_amount_rather_than_the_change() {
     let mut wallet = test_wallet();
     fund(&mut wallet, &[(100_000, 40)], true);
     let daemon = MockDaemon::default();
     // Below the proof-of-work fork, so the small fee `sendAll` produces costs
     // no hashing.
-    let params =
-        SendParams { mixin: 1, send_all: true, ..SendParams::basic(&payee_address(), 100_000, "", HEIGHT_NO_POW) };
+    let params = SendParams {
+        mixin: 1,
+        send_all: true,
+        ..SendParams::basic(&payee_address(), 100_000, "", HEIGHT_NO_POW, HEIGHT_NO_POW)
+    };
     let prepared = prepare(&wallet, &daemon, &params).expect("prepared");
 
     assert_eq!(prepared.change_required, 0, "nothing comes back");
@@ -1374,7 +1394,7 @@ fn fusion_refuses_a_wallet_that_is_already_optimized() {
     let mut wallet = test_wallet();
     fund(&mut wallet, &[(100, 200), (200, 201)], true);
     let daemon = MockDaemon::default();
-    let params = FusionParams { mixin: 1, ..FusionParams::basic(HEIGHT) };
+    let params = FusionParams { mixin: 1, ..FusionParams::basic(HEIGHT, HEIGHT) };
     let err = prepare_fusion_transaction(&wallet, &daemon, &params, &mut seeded()).unwrap_err();
     assert_eq!(err.code(), 36, "FULLY_OPTIMIZED");
 }
@@ -1385,13 +1405,13 @@ fn fusion_refuses_a_ring_too_large_for_twelve_inputs() {
     let daemon = MockDaemon::default();
     // The tier caps the mixin at 7, so this is checked at a height with a
     // looser tier: 10,000 to 302,399 allows up to 30.
-    let params = FusionParams { mixin: 30, network_height: 300_000, ..FusionParams::basic(300_000) };
+    let params = FusionParams { mixin: 30, ..FusionParams::basic(300_000, 300_000) };
     let err = prepare_fusion_transaction(&wallet, &daemon, &params, &mut seeded()).unwrap_err();
     // 30 is under the limit, so this one is FULLY_OPTIMIZED, not the mixin.
     assert_eq!(err.code(), 36);
 
     // `validateOptimizeTarget`: more than one significant digit.
-    let params = FusionParams { mixin: 1, optimize_target: Some(1234), ..FusionParams::basic(HEIGHT) };
+    let params = FusionParams { mixin: 1, optimize_target: Some(1234), ..FusionParams::basic(HEIGHT, HEIGHT) };
     assert_eq!(prepare_fusion_transaction(&wallet, &daemon, &params, &mut seeded()).unwrap_err().code(), 59);
 }
 

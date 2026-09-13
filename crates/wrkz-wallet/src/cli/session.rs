@@ -963,11 +963,11 @@ impl Session {
         // the user is asked to approve.
         let prepared = {
             let mut open = self.open();
-            let network_height = open.network_height();
+            let (network_height, daemon_height) = (open.network_height(), open.daemon_height());
             let params = SendParams {
                 send_all,
                 pow_threads: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1),
-                ..SendParams::basic(&destination, amount, &effective_payment_id, network_height)
+                ..SendParams::basic(&destination, amount, &effective_payment_id, network_height, daemon_height)
             };
             let mut random = SystemRandom;
             let (wallet, daemon) = open.sync.split_for_transfer();
@@ -1107,8 +1107,10 @@ impl Session {
 
         // A ring below the tier default means the denominations being spent do
         // not have enough outputs on chain. Say so before approval, not after.
-        let network_height = self.open().network_height();
-        let default_mixin = wrkz_primitives::mixins::mixin_allowable_range(network_height).default;
+        // The tier at the daemon's own top block, the one the send was built for
+        // (`zedwallet++/Transfer.cpp`, C++ `0b58b035`).
+        let daemon_height = self.open().daemon_height();
+        let default_mixin = wrkz_primitives::mixins::mixin_allowable_range(daemon_height).default;
         if mixin < default_mixin {
             term.write(&format!(
                 "{}{}{}{}{}\n",
@@ -1243,8 +1245,8 @@ impl Session {
 
         let (est_tx_count, est_total_fee) = {
             let open = self.open();
-            let network_height = open.network_height();
-            transfer::estimate_sweep(open.wallet(), &payment_id, amount_to_sweep, network_height)
+            let daemon_height = open.daemon_height();
+            transfer::estimate_sweep(open.wallet(), &payment_id, amount_to_sweep, daemon_height)
         };
 
         term.write(&information("\nSweep Summary\n"));
@@ -1278,7 +1280,7 @@ impl Session {
 
         let results = {
             let mut open = self.open();
-            let network_height = open.network_height();
+            let daemon_height = open.daemon_height();
             let mut random = SystemRandom;
             let (wallet, daemon) = open.sync.split_for_transfer();
             transfer::sweep_to_address(
@@ -1287,7 +1289,7 @@ impl Session {
                 &address,
                 &payment_id,
                 amount_to_sweep,
-                network_height,
+                daemon_height,
                 &mut random,
             )
         };

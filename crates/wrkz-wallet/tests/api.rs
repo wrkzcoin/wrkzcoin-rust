@@ -81,6 +81,9 @@ fn foreign() -> &'static str {
 /// needs a height works and every route that needs the chain fails the way it
 /// would against an empty one.
 struct CannedDaemon {
+    /// The daemon's own top block index: `/info` `height` minus one.
+    local_height: u64,
+    /// The height peers claim: `/info` `network_height` minus one.
     network_height: u64,
     peers: u64,
     difficulty: u64,
@@ -88,7 +91,7 @@ struct CannedDaemon {
 
 impl Default for CannedDaemon {
     fn default() -> Self {
-        CannedDaemon { network_height: NETWORK_HEIGHT, peers: 8, difficulty: 60_000 }
+        CannedDaemon { local_height: NETWORK_HEIGHT, network_height: NETWORK_HEIGHT, peers: 8, difficulty: 60_000 }
     }
 }
 
@@ -118,7 +121,7 @@ impl SyncDaemon for CannedDaemon {
 
     fn info(&self) -> Result<Info, DaemonError> {
         Ok(Info {
-            height: self.network_height + 1,
+            height: self.local_height + 1,
             network_height: self.network_height + 1,
             difficulty: self.difficulty,
             incoming_connections_count: self.peers / 2,
@@ -1067,6 +1070,29 @@ fn the_send_routes_validate_before_they_build() {
     let body = format!(r#"{{"destinations":[{{"address":"{foreign_address}","amount":1000}}],"extra":"zz"}}"#);
     assert_eq!(api.call("POST", "/transactions/send/advanced", &body).error_code(), 53);
     // INVALID_EXTRA_DATA
+}
+
+#[test]
+fn the_mixin_tier_is_the_daemons_not_the_one_peers_claim() {
+    // One peer claiming a height past the mixin fork moves `network_height`
+    // past it, while the daemon's pool still judges at its own top block
+    // (C++ `0b58b035`). A ring of eight is refused as too big, as the pool would
+    // refuse it, rather than built.
+    let fork = wrkz_primitives::constants::MIXIN_LIMITS_V6_HEIGHT;
+    let factory: DaemonFactory = Box::new(move |_host, _port, _ssl| {
+        let daemon = CannedDaemon { local_height: fork - 10, network_height: fork + 10, ..CannedDaemon::default() };
+        Ok(Box::new(daemon) as Box<dyn WalletDaemon>)
+    });
+    let foreign_address = foreign();
+    let api = Api::with_factory("mixintier", factory);
+    let path = funded_wallet(&api.dir, "funded.wallet");
+    let body = format!(r#"{{"filename":{},"password":"{PASSWORD}"}}"#, quote(&path));
+    assert_eq!(api.call("POST", "/wallet/open", &body).status, 200);
+    assert_eq!(api.call("GET", "/balance", "").u64_at("unlocked"), 100_000_000);
+
+    let body = format!(r#"{{"destinations":[{{"address":"{foreign_address}","amount":1000}}],"mixin":7}}"#);
+    assert_eq!(api.call("POST", "/transactions/send/advanced", &body).error_code(), 22);
+    // MIXIN_TOO_BIG
 }
 
 #[test]

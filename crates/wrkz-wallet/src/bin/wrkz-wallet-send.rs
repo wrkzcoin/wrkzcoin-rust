@@ -200,13 +200,15 @@ fn run(args: Args) -> Result<ExitCode, String> {
     let daemon = Daemon::new(&args.daemon).map_err(|e| format!("bad --daemon: {e}"))?;
 
     let info = daemon.info().map_err(|e| format!("could not reach the daemon: {e}"))?;
-    // `Nigel::networkBlockCount()`: the network's top **index**, `/info`'s count
-    // minus one (`Nigel.cpp:867`), which is what every height-dependent rule of a
-    // send is judged at — the mixin tier above all. The daemon's pool judges a
-    // transaction at its top index too, so with the raw count a send built while
-    // the tip is 4,299,999 would take the 4,300,000 tier one block early and be
-    // refused.
+    // `Nigel::networkBlockCount()` and `Nigel::localDaemonBlockCount()`: top block
+    // **indexes**, `/info`'s counts minus one (`Nigel.cpp:867`). The fees, the
+    // unlock time and the inputs of a send are judged at the network's; the mixin
+    // tier at the daemon's own, because its pool judges the transaction at its top
+    // block and the network height is only what peers claim (C++ `0b58b035`).
+    // With a raw count, a send built while the tip is 4,299,999 would take the
+    // 4,300,000 tier one block early and be refused.
     let network_height = info.network_height.saturating_sub(1);
+    let daemon_height = info.height.saturating_sub(1);
 
     let mut wallet = Wallet::open(&args.wallet, &args.password)
         .map_err(|e| format!("could not open the wallet: {e} (code {})", e.code()))?;
@@ -235,7 +237,7 @@ fn run(args: Args) -> Result<ExitCode, String> {
 
     let params = SendParams {
         destinations: vec![(args.to.clone(), args.amount)],
-        mixin: args.mixin.unwrap_or_else(|| wrkz_primitives::mixins::mixin_allowable_range(network_height).default),
+        mixin: args.mixin.unwrap_or_else(|| wrkz_primitives::mixins::mixin_allowable_range(daemon_height).default),
         fee: args.fee.unwrap_or(FeeType::MinimumFee),
         payment_id: args.payment_id.clone(),
         addresses_to_take_from: args.from.clone(),
@@ -244,6 +246,7 @@ fn run(args: Args) -> Result<ExitCode, String> {
         extra_data: Vec::new(),
         send_all: args.send_all,
         network_height,
+        daemon_height,
         pow_threads: args.pow_threads.max(1),
     };
 

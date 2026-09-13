@@ -304,6 +304,12 @@ impl<T: HttpTransport + Clone, S: Storage> Service<T, S> {
         self.open.as_ref().map(|o| o.sync.daemon_state().network_block_count).unwrap_or(0)
     }
 
+    /// The daemon's own top block index, where its pool judges a transaction and
+    /// so where the mixin tier is read; `0` until `/info` has answered.
+    fn daemon_height(&self) -> u64 {
+        self.open.as_ref().map(|o| o.sync.daemon_state().local_block_count).unwrap_or(0)
+    }
+
     fn create(&mut self, name: &str, password: &str, new: NewWallet) -> Vec<Event> {
         if name.trim().is_empty() {
             return vec![error("A wallet needs a name.")];
@@ -505,7 +511,7 @@ impl<T: HttpTransport + Clone, S: Storage> Service<T, S> {
             send_all,
             fee,
             pow_threads: platform::available_threads(),
-            ..SendParams::basic(address.trim(), amount, payment_id.trim(), network_height)
+            ..SendParams::basic(address.trim(), amount, payment_id.trim(), network_height, self.daemon_height())
         };
 
         let Some(open) = self.open.as_mut() else { return vec![error("No wallet is open.")] };
@@ -558,7 +564,10 @@ impl<T: HttpTransport + Clone, S: Storage> Service<T, S> {
         if network_height == 0 {
             return vec![error("The node has not answered yet.")];
         }
-        let params = FusionParams { pow_threads: platform::available_threads(), ..FusionParams::basic(network_height) };
+        let params = FusionParams {
+            pow_threads: platform::available_threads(),
+            ..FusionParams::basic(network_height, self.daemon_height())
+        };
         let Some(open) = self.open.as_mut() else { return vec![error("No wallet is open.")] };
         let (wallet, daemon) = open.sync.split_for_transfer();
 

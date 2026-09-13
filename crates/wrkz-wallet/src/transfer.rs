@@ -327,7 +327,7 @@ pub struct SendParams {
     /// `(address, amount)` pairs. Integrated addresses are allowed and are
     /// split into address + payment id.
     pub destinations: Vec<(String, u64)>,
-    /// Ring size minus one. Must be inside the tier at `network_height`.
+    /// Ring size minus one. Must be inside the tier at `daemon_height`.
     pub mixin: u64,
     pub fee: FeeType,
     /// 16 or 64 hex characters, or empty.
@@ -342,9 +342,16 @@ pub struct SendParams {
     pub extra_data: Vec<u8>,
     /// Reduce the destination amount by the fee rather than the change.
     pub send_all: bool,
-    /// The height every height-dependent rule is judged at:
-    /// `daemon->networkBlockCount()`.
+    /// The height the fees, the unlock time, the inputs and the transaction
+    /// proof of work are judged at: `daemon->networkBlockCount()`.
     pub network_height: u64,
+    /// The daemon's own top block index, `daemon->localDaemonBlockCount()`. The
+    /// mixin tier and the validation before a send are judged here, because the
+    /// daemon's pool judges the transaction at its top block. `network_height`
+    /// is only what peers claim, and one peer claiming a height past a mixin
+    /// fork would otherwise have every send built for rules the pool does not
+    /// apply yet (C++ `0b58b035`).
+    pub daemon_height: u64,
     /// Threads the proof-of-work search may use. `1` keeps the search — and so
     /// the whole transaction — deterministic for a given seed.
     pub pow_threads: usize,
@@ -352,12 +359,18 @@ pub struct SendParams {
 
 impl SendParams {
     /// The defaults of `sendTransactionBasic` (`Transfer.cpp:39`) for one
-    /// destination: the tier default mixin at `network_height`, the minimum
+    /// destination: the tier default mixin at `daemon_height`, the minimum
     /// fee, change to the primary address, and the derived unlock time.
-    pub fn basic(destination: &str, amount: u64, payment_id: &str, network_height: u64) -> SendParams {
+    pub fn basic(
+        destination: &str,
+        amount: u64,
+        payment_id: &str,
+        network_height: u64,
+        daemon_height: u64,
+    ) -> SendParams {
         SendParams {
             destinations: vec![(destination.to_string(), amount)],
-            mixin: mixins::mixin_allowable_range(network_height).default,
+            mixin: mixins::mixin_allowable_range(daemon_height).default,
             fee: FeeType::MinimumFee,
             payment_id: payment_id.to_string(),
             addresses_to_take_from: Vec::new(),
@@ -366,6 +379,7 @@ impl SendParams {
             extra_data: Vec::new(),
             send_all: false,
             network_height,
+            daemon_height,
             pow_threads: 1,
         }
     }
@@ -382,20 +396,25 @@ pub struct FusionParams {
     /// Do not consume inputs at or above this amount, and do not build outputs
     /// larger than it. Must have a single significant digit (`AMOUNT_UGLY`).
     pub optimize_target: Option<u64>,
+    /// The height the inputs, the dust threshold and the fusion rules are
+    /// judged at, as [`SendParams::network_height`].
     pub network_height: u64,
+    /// The height the mixin tier is judged at, as [`SendParams::daemon_height`].
+    pub daemon_height: u64,
     pub pow_threads: usize,
 }
 
 impl FusionParams {
     /// `sendFusionTransactionBasic`: the tier default mixin, every subwallet,
     /// the primary address, no optimize target.
-    pub fn basic(network_height: u64) -> FusionParams {
+    pub fn basic(network_height: u64, daemon_height: u64) -> FusionParams {
         FusionParams {
-            mixin: mixins::mixin_allowable_range(network_height).default,
+            mixin: mixins::mixin_allowable_range(daemon_height).default,
             addresses_to_take_from: Vec::new(),
             destination_address: String::new(),
             optimize_target: None,
             network_height,
+            daemon_height,
             pow_threads: 1,
         }
     }
@@ -1817,10 +1836,12 @@ pub fn send_transaction_basic<D: TransferDaemon, R: TransferRandom>(
     amount: u64,
     payment_id: &str,
     network_height: u64,
+    daemon_height: u64,
     send_all: bool,
     random: &mut R,
 ) -> Result<PreparedTransaction> {
-    let params = SendParams { send_all, ..SendParams::basic(destination, amount, payment_id, network_height) };
+    let params =
+        SendParams { send_all, ..SendParams::basic(destination, amount, payment_id, network_height, daemon_height) };
     send_transaction_advanced(wallet, daemon, &params, random)
 }
 
@@ -1871,7 +1892,7 @@ fn build_with_mixin_fallback<D: TransferDaemon, R: TransferRandom>(
         return Err(failure.error);
     }
 
-    let min = mixins::mixin_allowable_range(params.network_height).min;
+    let min = mixins::mixin_allowable_range(params.daemon_height).min;
     let Some(retry) = next_fallback_mixin(params.mixin, failure.achievable_mixin, min) else {
         return Err(failure.error);
     };
@@ -1907,7 +1928,9 @@ fn send_transaction_advanced_with_mixin<D: TransferDaemon, R: TransferRandom>(
 
     let unlock_time = if params.unlock_time == 0 { default_unlock_time(network_height) } else { params.unlock_time };
 
-    // 2. validation
+    // 2. validation, at the daemon's own top block: the mixin, and the unlock of
+    // every input the balance counts, are judged where the pool will judge them
+    // (C++ `0b58b035`)
     validate_transaction_parameters(
         wallet,
         &params.destinations,
@@ -1917,7 +1940,7 @@ fn send_transaction_advanced_with_mixin<D: TransferDaemon, R: TransferRandom>(
         &params.addresses_to_take_from,
         &change_address,
         unlock_time,
-        network_height,
+        params.daemon_height,
         now,
     )?;
 
@@ -2173,7 +2196,7 @@ pub fn is_fusion_transaction(tx: &RawTransaction, size: usize, height: u64) -> b
 /// `validateFusionTransaction` (`ValidateParameters.cpp:27`): mixin, the
 /// subwallets to take from, the destination, and the optimize target.
 fn validate_fusion_parameters(wallet: &Wallet, params: &FusionParams, destination: &str) -> Result<()> {
-    validate_mixin(params.mixin, params.network_height)?;
+    validate_mixin(params.mixin, params.daemon_height)?;
     for address in &params.addresses_to_take_from {
         validate_our_address(wallet, address)?;
     }
@@ -2202,9 +2225,10 @@ pub fn send_fusion_transaction_basic<D: TransferDaemon, R: TransferRandom>(
     wallet: &mut Wallet,
     daemon: &D,
     network_height: u64,
+    daemon_height: u64,
     random: &mut R,
 ) -> Result<PreparedTransaction> {
-    send_fusion_transaction_advanced(wallet, daemon, &FusionParams::basic(network_height), random)
+    send_fusion_transaction_advanced(wallet, daemon, &FusionParams::basic(network_height, daemon_height), random)
 }
 
 /// A fusion send with the selection knobs exposed. See
@@ -2551,9 +2575,12 @@ const SWEEP_POW_NONCE_OVERHEAD: usize = 9;
 ///
 /// `(0, 0)` when nothing can be swept: no spendable inputs, or not even one
 /// input fits in a transaction at this ring size.
-pub fn estimate_sweep(wallet: &Wallet, payment_id: &str, amount_to_sweep: u64, network_height: u64) -> (usize, u64) {
-    let mixin = mixins::mixin_allowable_range(network_height).default;
-    let Some(batches) = sweep_batches(wallet, payment_id, amount_to_sweep, network_height, mixin) else {
+///
+/// `height` is the daemon's own top block index, where the C++ judges every
+/// rule of a sweep (`localDaemonBlockCount`, C++ `0b58b035`).
+pub fn estimate_sweep(wallet: &Wallet, payment_id: &str, amount_to_sweep: u64, height: u64) -> (usize, u64) {
+    let mixin = mixins::mixin_allowable_range(height).default;
+    let Some(batches) = sweep_batches(wallet, payment_id, amount_to_sweep, height, mixin) else {
         return (0, 0);
     };
 
@@ -2562,7 +2589,7 @@ pub fn estimate_sweep(wallet: &Wallet, payment_id: &str, amount_to_sweep: u64, n
 
     for batch in &batches {
         let batch_sum: u64 = batch.iter().map(|i| i.input.amount).sum();
-        let fee = sweep_batch_fee_estimate(batch.len(), batch_sum, payment_id, amount_to_sweep, network_height, mixin);
+        let fee = sweep_batch_fee_estimate(batch.len(), batch_sum, payment_id, amount_to_sweep, height, mixin);
         if fee >= batch_sum {
             continue;
         }
@@ -2581,25 +2608,20 @@ pub fn estimate_sweep(wallet: &Wallet, payment_id: &str, amount_to_sweep: u64, n
 /// a partial sweep leaves a consistent wallet. The returned vector has one
 /// entry per batch, in order; a rejected destination or a view wallet is a
 /// single `Err` entry, which is what the C++ returns.
+///
+/// `height` is the daemon's own top block index: the C++ judges the mixin, the
+/// unlock time, the inputs, the size limit and the fees of a sweep there
+/// (`localDaemonBlockCount`, C++ `0b58b035`).
 pub fn sweep_to_address<D: TransferDaemon, R: TransferRandom>(
     wallet: &mut Wallet,
     daemon: &D,
     destination: &str,
     payment_id: &str,
     amount_to_sweep: u64,
-    network_height: u64,
+    height: u64,
     random: &mut R,
 ) -> Vec<SweepResult> {
-    sweep_to_address_reporting(
-        wallet,
-        daemon,
-        destination,
-        payment_id,
-        amount_to_sweep,
-        network_height,
-        random,
-        &mut |_| {},
-    )
+    sweep_to_address_reporting(wallet, daemon, destination, payment_id, amount_to_sweep, height, random, &mut |_| {})
 }
 
 /// [`sweep_to_address`], handing each batch to `on_sent` the moment it has
@@ -2614,7 +2636,7 @@ pub fn sweep_to_address_reporting<D: TransferDaemon, R: TransferRandom>(
     destination: &str,
     payment_id: &str,
     amount_to_sweep: u64,
-    network_height: u64,
+    height: u64,
     random: &mut R,
     on_sent: &mut dyn FnMut(&PreparedTransaction),
 ) -> Vec<SweepResult> {
@@ -2645,19 +2667,19 @@ pub fn sweep_to_address_reporting<D: TransferDaemon, R: TransferRandom>(
     let recipient_view_key =
         if resolved_payment_id.len() == SHORT_PAYMENT_ID_LENGTH { Some(Hex32(parsed.view_public_key)) } else { None };
 
-    let range = mixins::mixin_allowable_range(network_height);
+    let range = mixins::mixin_allowable_range(height);
     let mixin = range.default;
-    let unlock_time = default_unlock_time(network_height);
+    let unlock_time = default_unlock_time(height);
     let Some(change_address) = wallet.primary_address().map(str::to_string) else {
         return vec![Err(WalletError::IllegalViewWalletOperation)];
     };
 
-    let max_size = fees::wallet_max_tx_size(network_height);
+    let max_size = fees::wallet_max_tx_size(height);
     if approximate_maximum_input_count(max_size as usize, SWEEP_OUTPUT_ALLOWANCE, mixin) == 0 {
         return vec![Err(WalletError::TooManyInputsToFitInBlock { size: 0, max: max_size })];
     }
 
-    let Some(batches) = sweep_batches(wallet, &resolved_payment_id, amount_to_sweep, network_height, mixin) else {
+    let Some(batches) = sweep_batches(wallet, &resolved_payment_id, amount_to_sweep, height, mixin) else {
         return vec![Err(WalletError::NotEnoughBalance { needed: amount_to_sweep, available: 0 })];
     };
 
@@ -2665,14 +2687,8 @@ pub fn sweep_to_address_reporting<D: TransferDaemon, R: TransferRandom>(
 
     for batch in batches {
         let batch_sum: u64 = batch.iter().map(|i| i.input.amount).sum();
-        let mut batch_fee = sweep_batch_fee_estimate(
-            batch.len(),
-            batch_sum,
-            &resolved_payment_id,
-            amount_to_sweep,
-            network_height,
-            mixin,
-        );
+        let mut batch_fee =
+            sweep_batch_fee_estimate(batch.len(), batch_sum, &resolved_payment_id, amount_to_sweep, height, mixin);
 
         if batch_fee >= batch_sum {
             // The fee would eat the whole batch; the C++ skips it with an error
@@ -2688,7 +2704,7 @@ pub fn sweep_to_address_reporting<D: TransferDaemon, R: TransferRandom>(
             change_address: &change_address,
             amount_to_sweep,
             unlock_time,
-            network_height,
+            network_height: height,
             mixin,
             min_mixin: range.min,
         };

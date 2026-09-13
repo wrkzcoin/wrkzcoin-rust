@@ -441,6 +441,13 @@ impl OpenWallet {
         self.sync.daemon_state().network_block_count
     }
 
+    /// The daemon's own top block index, where its pool judges a transaction:
+    /// the height of the mixin tier and of the validation before a send
+    /// ([`crate::transfer::SendParams::daemon_height`]).
+    pub fn daemon_height(&self) -> u64 {
+        self.sync.daemon_state().local_block_count
+    }
+
     /// `WalletBackend::save`.
     pub fn save(&self) -> Result<()> {
         let _one = one_save_at_a_time();
