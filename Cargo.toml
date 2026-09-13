@@ -59,7 +59,7 @@ flate2 = "1"
 getrandom = "0.3"
 groestl = { version = "0.11", default-features = false }
 hex = "0.4"
-hmac = "0.12"
+hmac = "0.13"
 jh = { version = "0.2", default-features = false }
 js-sys = "0.3"
 keccak = "0.2"
