@@ -3,12 +3,11 @@ name = "wrkz-pow-ref"
 description = "The reference C of wrkzcoin 8d89d7bf, vendored unchanged: Keccak and the ref10 curve code (feature `curve`, still called by wrkz-pow's curve module) and, behind the `pow` feature, the CryptoNight family, argon2 and tree hash that wrkz-pow's Rust port is tested against. See spec/02-hashing.md."
 version.workspace = true
 edition.workspace = true
-# Not the workspace's plain MIT: `c/` is the C++ repository's C code, unchanged,
-# and keeps its own licences, which c/LICENSE and c/argon2/LICENSE collect and
-# each file's header names: LGPL-3.0 or later (CryptoNote), BSD-3-Clause
-# (Monero), GPL-3.0 or later (TurtleCoin, WrkzCoin) and MIT (argon2). The Rust
-# of this crate is MIT.
-license = "MIT AND BSD-3-Clause AND LGPL-3.0-or-later AND GPL-3.0-or-later"
+# `c/` is the C++ repository's C code, unchanged, under the notices its LICENSE
+# collects (the same file as this repository's) and each file's header names:
+# LGPL-3.0 or later (CryptoNote), BSD-3-Clause (Monero), GPL-3.0 or later
+# (TurtleCoin, WrkzCoin), and MIT for argon2 (c/argon2/LICENSE).
+license = "GPL-3.0-or-later AND LGPL-3.0-or-later AND BSD-3-Clause AND MIT"
 repository.workspace = true
 publish.workspace = true
 rust-version.workspace = true

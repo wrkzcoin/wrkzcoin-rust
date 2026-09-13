@@ -23,7 +23,9 @@ exclude = ["apps/pluton"]
 [workspace.package]
 version = "1.0.0"
 edition = "2021"
-license = "MIT"
+# As the C++ WrkzCoin: GPL-3.0 or later, with the CryptoNote, Bytecoin, Monero
+# and TurtleCoin notices LICENSE carries.
+license = "GPL-3.0-or-later"
 repository = "https://github.com/wrkzcoin/wrkzcoin-rust"
 # Built from this repository, never published to crates.io. deny.toml's
 # `licenses.private` relies on it to leave the workspace's own crates alone.

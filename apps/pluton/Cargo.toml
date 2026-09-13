@@ -8,7 +8,7 @@ name = "rust-pluton-wallet"
 description = "Rust Pluton Wallet: the WrkzCoin wallet for Windows, macOS, Linux, Android and the browser, on the Rust wallet core."
 version = "1.0.0"
 edition = "2021"
-license = "MIT"
+license = "GPL-3.0-or-later"
 repository = "https://github.com/wrkzcoin/wrkzcoin-rust"
 publish = false
 

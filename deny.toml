@@ -43,10 +43,9 @@ allow = [
 confidence-threshold = 0.9
 
 # The workspace's own crates are skipped: none is published (`publish = false`
-# in Cargo.toml), and the list above is for what the tree pulls in. They would
-# not all pass it: `wrkz-pow-ref` carries the C++ repository's C code under its
-# own licences, GPL-3.0 among them (crates/wrkz-pow-ref/c/LICENSE, and that
-# crate's `license` field).
+# in Cargo.toml), and the list above is for what the tree pulls in. They are
+# GPL-3.0 or later, as the C++ WrkzCoin is (LICENSE), which a permissive-only
+# list would refuse.
 [licenses.private]
 ignore = true
 

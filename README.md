@@ -183,15 +183,15 @@ through the stratum port, and a cross-compiled build run against the chain.
 
 ## Licence
 
-The code in this repository is under the MIT licence ([`LICENSE`](LICENSE)),
-with one exception: `crates/wrkz-pow-ref/c/` is C code copied unchanged from
-the C++ WrkzCoin repository, and it keeps its own licences — LGPL-3.0 or later
-(CryptoNote), BSD-3-Clause (Monero), GPL-3.0 or later (TurtleCoin, WrkzCoin)
-and MIT (argon2), collected in
-[`crates/wrkz-pow-ref/c/LICENSE`](crates/wrkz-pow-ref/c/LICENSE) and named in
-each file's header. Every program here links the curve code from that
-directory, so the programs built from this repository include GPL-3.0 code,
-and distributing them means meeting the GPL's terms as well.
+WrkzCoin (Rust) is licensed as the C++ WrkzCoin is: under the GNU General
+Public License, version 3 or later, keeping the notices of the projects the
+code grew from — the CryptoNote developers and the Bytecoin developers
+(LGPL-3.0), the Monero Project (BSD-3-Clause) and the TurtleCoin developers
+(GPL-3.0). [`LICENSE`](LICENSE) is the C++ repository's own file, unchanged.
+
+`crates/wrkz-pow-ref/c/` is C code copied unchanged from the C++ repository,
+under the same notices and each file's header; its argon2 is MIT
+([`crates/wrkz-pow-ref/c/argon2/LICENSE`](crates/wrkz-pow-ref/c/argon2/LICENSE)).
 
 Rust Pluton Wallet draws with [Slint](https://slint.dev) under Slint's
 royalty-free licence, which asks that the application show the "About Slint"
