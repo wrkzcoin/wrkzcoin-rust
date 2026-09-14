@@ -53,8 +53,14 @@
 //!
 //! When the console is attached to a real terminal it registers its prompt with
 //! [`set_prompt`]. A log line then erases the prompt, prints itself and redraws
-//! the prompt. Two limits are worth knowing, because they are properties of
-//! reading stdin in the terminal's own line mode rather than in raw mode:
+//! the prompt.
+//!
+//! Where the line editor runs ([`crate::readline`]), the row it registers with
+//! [`draw_prompt_row`] is the prompt *and* the half-typed line, with where the
+//! cursor sits in it, so a log line puts back exactly what the operator was
+//! looking at; the editor scrolls a long line sideways, so the row never wraps.
+//! Where it cannot run, stdin is read in the terminal's own line mode, and two
+//! limits follow from that:
 //!
 //! - **the half-typed line is not restored.** The characters the operator had
 //!   typed are in the terminal driver's buffer, not ours; we cannot read them
@@ -555,8 +561,12 @@ impl LogFile {
 struct Out {
     /// The `--log-file` sink, when there is one.
     file: Option<LogFile>,
-    /// The console's prompt, when one is drawn on the terminal right now.
+    /// The console's prompt, when one is drawn on the terminal right now —
+    /// followed by the half-typed line while [`crate::readline`] edits one.
     prompt: Option<String>,
+    /// How many columns short of the end of `prompt` the cursor sits. Only the
+    /// line editor moves it off the end.
+    cursor_back: usize,
     /// The last [`RECENT_CAPACITY`] lines, for the console's `log_tail`. The
     /// only way an operator whose stderr is redirected can see what the node
     /// has just said without leaving the console.
@@ -566,7 +576,7 @@ struct Out {
 /// The one lock every writer to the terminal takes: the logger here, and the
 /// console's own output. Nothing is held across anything but the write itself,
 /// and every line is formatted before it is taken.
-static OUT: Mutex<Out> = Mutex::new(Out { file: None, prompt: None, recent: VecDeque::new() });
+static OUT: Mutex<Out> = Mutex::new(Out { file: None, prompt: None, cursor_back: 0, recent: VecDeque::new() });
 
 fn out() -> MutexGuard<'static, Out> {
     // A panic while a line was being written must not silence the log for the
@@ -633,7 +643,9 @@ pub fn recent(count: usize) -> Vec<String> {
 /// The console sets it only when stdin *and* stdout are terminals, and clears
 /// it when the reader stops.
 pub fn set_prompt(prompt: Option<String>) {
-    out().prompt = prompt;
+    let mut guard = out();
+    guard.prompt = prompt;
+    guard.cursor_back = 0;
 }
 
 /// Draw the prompt on stdout again with nothing above it.
@@ -642,15 +654,70 @@ pub fn set_prompt(prompt: Option<String>) {
 /// so that pressing Enter does not leave the operator staring at a bare row.
 pub fn redraw_prompt() {
     let guard = out();
-    if !terminal().stdout {
+    let term = terminal();
+    if !term.stdout {
         return;
     }
     if let Some(prompt) = guard.prompt.as_deref() {
+        let mut row = String::new();
+        push_row(&mut row, prompt, guard.cursor_back, term.erase_stdout);
         let mut sink = std::io::stdout().lock();
-        let _ = sink.write_all(prompt.as_bytes());
+        let _ = sink.write_all(row.as_bytes());
         let _ = sink.flush();
     }
     drop(guard);
+}
+
+/// Draw the line editor's prompt row ([`crate::readline`]): `row` is the
+/// prompt and as much of the half-typed line as fits, and the cursor is left
+/// `back` columns short of its end. Both are remembered, so a log line arriving
+/// while the operator types takes the row off and puts it back as it was.
+pub fn draw_prompt_row(row: &str, back: usize) {
+    let mut guard = out();
+    guard.prompt = Some(row.to_string());
+    guard.cursor_back = back;
+    let term = terminal();
+    if !term.stdout {
+        return;
+    }
+    let mut buffer = String::with_capacity(row.len() + 16);
+    term.erase_stdout.push(&mut buffer, row.chars().count());
+    push_row(&mut buffer, row, back, term.erase_stdout);
+    let mut sink = std::io::stdout().lock();
+    let _ = sink.write_all(buffer.as_bytes());
+    let _ = sink.flush();
+    drop(guard);
+}
+
+/// The line editor's Enter: draw `row` — the prompt and the whole line, however
+/// wide — once more and end it, then register the bare `prompt` again, which is
+/// how the terminal's own line mode leaves things after Enter.
+pub fn end_prompt_row(row: &str, prompt: &str) {
+    let mut guard = out();
+    guard.prompt = Some(prompt.to_string());
+    guard.cursor_back = 0;
+    let term = terminal();
+    if !term.stdout {
+        return;
+    }
+    let mut buffer = String::with_capacity(row.len() + 16);
+    term.erase_stdout.push(&mut buffer, row.chars().count());
+    buffer.push_str(row);
+    buffer.push('\n');
+    let mut sink = std::io::stdout().lock();
+    let _ = sink.write_all(buffer.as_bytes());
+    let _ = sink.flush();
+    drop(guard);
+}
+
+/// Push a prompt row, then move the cursor `back` columns left, to where the
+/// line editor had it. Only a terminal that takes ANSI can be told to, and the
+/// editor runs on no other.
+fn push_row(buffer: &mut String, row: &str, back: usize, erase: Erase) {
+    buffer.push_str(row);
+    if back > 0 && erase == Erase::Ansi {
+        buffer.push_str(&format!("\x1b[{back}D"));
+    }
 }
 
 impl Out {
@@ -672,7 +739,7 @@ impl Out {
         buffer.push_str(line);
         buffer.push('\n');
         if let Some(prompt) = redraw {
-            buffer.push_str(prompt);
+            push_row(&mut buffer, prompt, self.cursor_back, term.erase_stderr);
         }
 
         let mut err = std::io::stderr().lock();
@@ -750,7 +817,9 @@ pub fn console_print(text: &str) {
         let _ = sink.write_all(b"\n");
     }
     if let Some(prompt) = prompt {
-        let _ = sink.write_all(prompt.as_bytes());
+        let mut row = String::new();
+        push_row(&mut row, prompt, guard.cursor_back, term.erase_stdout);
+        let _ = sink.write_all(row.as_bytes());
     }
     let _ = sink.flush();
     drop(guard);
@@ -973,5 +1042,20 @@ mod tests {
             guard.recent.clear();
         }
         set_prompt(None);
+    }
+
+    #[test]
+    fn the_cursor_is_put_back_where_the_line_editor_left_it_and_only_with_ansi() {
+        let mut row = String::new();
+        push_row(&mut row, "wrkz-node> print_bc", 3, Erase::Ansi);
+        assert_eq!(row, "wrkz-node> print_bc\x1b[3D", "three columns short of the end");
+
+        row.clear();
+        push_row(&mut row, "wrkz-node> print_bc", 0, Erase::Ansi);
+        assert_eq!(row, "wrkz-node> print_bc", "at the end there is nothing to move");
+
+        row.clear();
+        push_row(&mut row, "wrkz-node> print_bc", 3, Erase::Blanks);
+        assert_eq!(row, "wrkz-node> print_bc", "no escape for a terminal that would print it");
     }
 }

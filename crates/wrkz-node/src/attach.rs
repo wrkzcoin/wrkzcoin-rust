@@ -13,10 +13,12 @@
 //! 1. the address must be the daemon's `--rpc-ipc-path`: an absolute path, an
 //!    `@name`, or `ipc://path` — console commands are never served over TCP;
 //! 2. `help` goes first, as the connection test, and its answer is printed;
-//! 3. then the `> ` prompt: a blank line is skipped, `exit` and `quit` leave
-//!    without sending anything, and every other line is sent as typed. After
-//!    `stop` the daemon is shutting down, and the console leaves with it. End
-//!    of input leaves too, with status 0.
+//! 3. then the `> ` prompt, which on a terminal has the history and line
+//!    editing of the daemon's own console ([`wrkz_rpc::readline`]): a blank
+//!    line is skipped, `exit` and `quit` leave without sending anything, and
+//!    every other line is sent as typed. After `stop` the daemon is shutting
+//!    down, and the console leaves with it. End of input leaves too, with
+//!    status 0.
 //!
 //! The timeouts are the C++'s: two seconds to connect and to send, a day to
 //! wait for an answer, because a command may run for hours. No access token is
@@ -29,7 +31,6 @@
 //!
 //! - The prompt is drawn only when stdin is a terminal, so a script piped in
 //!   gets the commands' output and nothing between it.
-//! - No line editing and no history; the C++ reads through linenoise.
 //! - Ctrl+C leaves at once with status 0, at the prompt or in the middle of a
 //!   command. linenoise gives the C++ the same at the prompt; during a command
 //!   the signal's default action kills it.
@@ -40,6 +41,7 @@ use std::io::{BufRead, Write};
 use std::time::Duration;
 
 use wrkz_rpc::json::{self, Json, Obj, ParseLimits};
+use wrkz_rpc::readline::Editor;
 
 /// `CONNECT_TIMEOUT_SECONDS` (`AttachConsole.cpp:21`): connecting, and sending.
 pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
@@ -120,16 +122,62 @@ pub trait Transport {
     fn run(&mut self, line: &str) -> Result<String, String>;
 }
 
+/// What the console prompts with.
+const PROMPT: &str = "> ";
+
+/// Where the console's lines come from.
+pub trait Lines {
+    /// The next line, without its line ending; `None` at the end of input.
+    /// `out` is the console's output, for the prompt and for the newline a
+    /// Ctrl+D at one leaves wanting.
+    fn next_line<W: Write>(&mut self, out: &mut W) -> Option<String>;
+}
+
+/// Lines from a reader: a script piped in, or a terminal the line editor
+/// cannot run on. `prompt` draws the prompt before each, which only a terminal
+/// wants.
+pub struct Plain<R> {
+    pub reader: R,
+    pub prompt: bool,
+}
+
+impl<R: BufRead> Lines for Plain<R> {
+    fn next_line<W: Write>(&mut self, out: &mut W) -> Option<String> {
+        if self.prompt {
+            let _ = write!(out, "{PROMPT}");
+        }
+        let _ = out.flush();
+        let mut line = Vec::new();
+        match self.reader.read_until(b'\n', &mut line) {
+            Ok(0) | Err(_) => {
+                // Ctrl+D at a prompt: put the shell's prompt on a line of its own.
+                if self.prompt {
+                    let _ = writeln!(out);
+                }
+                None
+            }
+            Ok(_) => Some(String::from_utf8_lossy(&line).trim_end_matches(['\r', '\n']).to_string()),
+        }
+    }
+}
+
+/// Lines from a terminal, with the history and line editing of the daemon's
+/// own console.
+impl Lines for Editor {
+    fn next_line<W: Write>(&mut self, out: &mut W) -> Option<String> {
+        let _ = out.flush();
+        let line = self.read_line(PROMPT);
+        if line.is_none() {
+            let _ = writeln!(out);
+        }
+        line
+    }
+}
+
 /// The console itself (`runAttachConsole`, `AttachConsole.cpp:120-176`),
-/// over any transport, input and output. `describe` names the socket, as
+/// over any transport, lines and output. `describe` names the socket, as
 /// `Common::Ipc::describe` does. Returns the process exit status.
-pub fn session<T: Transport, R: BufRead, W: Write>(
-    transport: &mut T,
-    describe: &str,
-    mut input: R,
-    out: &mut W,
-    prompt: bool,
-) -> u8 {
+pub fn session<T: Transport, L: Lines, W: Write>(transport: &mut T, describe: &str, input: &mut L, out: &mut W) -> u8 {
     let help = match transport.run("help") {
         Ok(help) => help,
         Err(e) => {
@@ -142,30 +190,12 @@ pub fn session<T: Transport, R: BufRead, W: Write>(
     print_output(out, &help);
     let _ = writeln!(out, "{LEAVING_HINT}");
 
-    let mut line = Vec::new();
-    loop {
-        if prompt {
-            let _ = write!(out, "> ");
-        }
-        let _ = out.flush();
-        line.clear();
-        match input.read_until(b'\n', &mut line) {
-            Ok(0) | Err(_) => {
-                // Ctrl+D at a prompt: put the shell's prompt on a line of its own.
-                if prompt {
-                    let _ = writeln!(out);
-                }
-                break;
-            }
-            Ok(_) => {}
-        }
-        let text = String::from_utf8_lossy(&line);
-        let text = text.trim_end_matches(['\r', '\n']);
+    while let Some(text) = input.next_line(out) {
         let Some(command) = text.split_whitespace().next() else { continue };
         if command == "exit" || command == "quit" {
             break;
         }
-        match transport.run(text) {
+        match transport.run(&text) {
             Ok(output) => print_output(out, &output),
             Err(e) => {
                 let _ = writeln!(out, "Command failed: {e}");
@@ -207,10 +237,15 @@ pub fn run(endpoint: &str) -> u8 {
 fn run_on_socket(path: &str) -> u8 {
     leave_on_interrupt();
     let mut transport = IpcTransport::new(path);
-    let prompt = crate::log::terminal().stdin;
-    let stdin = std::io::stdin();
+    let describe = wrkz_rpc::ipc::describe(path);
     let mut stdout = std::io::stdout();
-    session(&mut transport, &wrkz_rpc::ipc::describe(path), stdin.lock(), &mut stdout, prompt)
+    match Editor::new() {
+        Some(mut editor) => session(&mut transport, &describe, &mut editor, &mut stdout),
+        None => {
+            let mut lines = Plain { reader: std::io::stdin().lock(), prompt: crate::log::terminal().stdin };
+            session(&mut transport, &describe, &mut lines, &mut stdout)
+        }
+    }
 }
 
 #[cfg(not(unix))]
@@ -223,8 +258,11 @@ fn run_on_socket(_path: &str) -> u8 {
 #[cfg(unix)]
 fn leave_on_interrupt() {
     extern "C" fn leave(_signal: libc::c_int) {
-        // SAFETY: `write` and `_exit` are async-signal-safe, and nothing else
-        // is touched.
+        // A line being typed has the terminal out of its own mode, and `_exit`
+        // runs no `atexit` handler to put it back.
+        wrkz_rpc::readline::restore_terminal();
+        // SAFETY: `write` and `_exit` are async-signal-safe, as
+        // `restore_terminal` promises to be, and nothing else is touched.
         unsafe {
             libc::write(1, b"\n".as_ptr().cast(), 1);
             libc::_exit(0);
@@ -314,7 +352,8 @@ mod tests {
 
     fn attach(transport: &mut Scripted, input: &str, prompt: bool) -> (u8, String) {
         let mut out = Vec::new();
-        let status = session(transport, "socket /run/wrkzd.sock", input.as_bytes(), &mut out, prompt);
+        let mut lines = Plain { reader: input.as_bytes(), prompt };
+        let status = session(transport, "socket /run/wrkzd.sock", &mut lines, &mut out);
         (status, String::from_utf8(out).unwrap())
     }
 

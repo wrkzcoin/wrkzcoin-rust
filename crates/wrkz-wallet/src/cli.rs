@@ -88,10 +88,10 @@
 //!
 //! # What is not here
 //!
-//! - **Tab completion and command history.** `linenoise` supplies both in the
-//!   C++ (`GetInput.cpp:65`). Reproducing them means a raw-mode line editor,
-//!   which is a much bigger surface than the rest of this file; the prompt
-//!   reads a line plainly instead.
+//! - **Tab completion.** `linenoise` supplies it in the C++
+//!   (`GetInput.cpp:65`), with the command history. The history and in-line
+//!   editing are here ([`term::Terminal::read_command`]); completing a
+//!   command name is not.
 //! - **Colour on a Windows console below the ANSI-capable builds.** ANSI is
 //!   emitted directly rather than translated; [`term::set_colour`] turns it off.
 
@@ -182,6 +182,9 @@ pub fn save_on_signal() {
             }
         }
         wrkz_rpc::log::flush_file();
+        // A command being typed has the terminal out of its own mode, and not
+        // every platform's `exit` runs the handler that puts it back.
+        wrkz_rpc::readline::restore_terminal();
         std::process::exit(code);
     });
 }

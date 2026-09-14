@@ -2,12 +2,21 @@
 //
 // Please see the included LICENSE file for more information
 
-//! The terminal: reading a line, reading a password without echoing it, and
-//! the three colours `utilities/ColouredMsg.h` uses.
+//! The terminal: reading a line, reading a command with history, reading a
+//! password without echoing it, and the three colours
+//! `utilities/ColouredMsg.h` uses.
 //!
 //! Everything the wallet prints and reads goes through [`Terminal`], so the
 //! whole interface can be driven from a script in a test with no tty, and so
 //! there is exactly one place that can echo a password.
+//!
+//! # Commands
+//!
+//! The prompts that take a command read through [`Terminal::read_command`],
+//! which on a terminal has the arrow-key history and in-line editing
+//! zedwallet++ gets from linenoise ([`wrkz_rpc::readline`]). Every other read
+//! stays a plain line, so an address, an amount or a seed is never kept for Up
+//! to put back on the screen.
 //!
 //! # Hiding the echo
 //!
@@ -22,6 +31,7 @@ use std::collections::VecDeque;
 use std::io::{BufRead, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use wrkz_rpc::readline::Editor;
 use zeroize::Zeroizing;
 
 ////////////////////////
@@ -70,6 +80,13 @@ pub trait Terminal {
     /// which the C++ treats as ctrl-c: cancel, or exit.
     fn read_line(&mut self) -> Option<String>;
 
+    /// A line at a prompt that takes a command. The same as
+    /// [`Terminal::read_line`], unless the terminal has the line editor, which
+    /// adds the history of the commands entered before.
+    fn read_command(&mut self) -> Option<String> {
+        self.read_line()
+    }
+
     /// One line with the echo suppressed. The result is zeroized on drop and
     /// is never written back to the terminal or to a log.
     fn read_password(&mut self) -> Option<Zeroizing<String>>;
@@ -98,11 +115,19 @@ pub trait Terminal {
 /// with the logger ([`wrkz_rpc::log::set_prompt`]), which then takes the
 /// prompt off before a log line from the sync thread and draws it again after.
 /// Only on a terminal, where there is a prompt to protect.
-#[derive(Default)]
 pub struct StdTerminal {
     /// What is on the current row: everything written since the last `\n`
     /// or `\r`.
     row: String,
+    /// The line editor [`Terminal::read_command`] reads through, where the
+    /// terminal can take one.
+    commands: Option<Editor>,
+}
+
+impl Default for StdTerminal {
+    fn default() -> StdTerminal {
+        StdTerminal { row: String::new(), commands: Editor::new() }
+    }
 }
 
 /// The longest prompt remembered; a prompt is a few words.
@@ -160,6 +185,17 @@ impl Terminal for StdTerminal {
             Ok(0) | Err(_) => None,
             Ok(_) => Some(trim_newline(line)),
         }
+    }
+
+    fn read_command(&mut self) -> Option<String> {
+        let Some(editor) = self.commands.as_mut() else {
+            return self.read_line();
+        };
+        let shown = PromptShown::while_reading(&self.row);
+        let line = editor.read_line(&self.row);
+        drop(shown);
+        self.row.clear();
+        line
     }
 
     fn read_password(&mut self) -> Option<Zeroizing<String>> {

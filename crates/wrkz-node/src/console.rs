@@ -69,18 +69,17 @@
 //! | `status` prints `DB Engine: RocksDB` | whichever engine this build opened |
 //! | `snapshot_export` | the same, over [`crate::snapshot::Exporter`]; a console built without one says so |
 //! | `compact_db wait` waits holding the compaction lock | it does not; see [`crate::compaction`] |
-//! | linenoise: history and line editing | none, and no `log_tail` there; see below |
+//! | linenoise: history and line editing | the same, through [`wrkz_rpc::readline`]; and `log_tail`, which the C++ has not; see below |
 //!
-//! # No line editing, and what stands in for it
+//! # Line editing, and `log_tail`
 //!
-//! The C++ console reads through linenoise, so it has arrow-key history and
-//! in-line editing. This one reads whole lines from the terminal in the
-//! terminal's own line mode: backspace and the shell's own kill-line work,
-//! arrow keys do not, and there is no history. Adding history would mean
-//! putting the terminal into raw mode and writing a line editor — cursor
-//! movement, wrapping, a resize handler, Ctrl-C — which is a great deal of
-//! `unsafe` termios and Win32 for a daemon console. It is a real gap; it is
-//! listed as such rather than half-built.
+//! On a terminal the prompt reads through [`wrkz_rpc::readline`]: Up and Down
+//! go back through the last hundred commands, the line can be edited where the
+//! cursor is, and a log line arriving mid-edit takes the half-typed line off the
+//! screen and puts it back, cursor and all. The history lasts until the daemon
+//! stops. Where the terminal cannot take that — `TERM=dumb`, a Windows console
+//! too old for virtual-terminal input — the line is read in the terminal's own
+//! line mode instead: backspace works, the arrow keys and the history do not.
 //!
 //! What the C++ does *not* have and this does: `log_tail`, which prints the
 //! last lines the logger emitted. On a node whose stderr went somewhere the
@@ -94,6 +93,7 @@ use std::time::Duration;
 use wrkz_primitives::constants::{DIFFICULTY_TARGET, FORK_HEIGHTS, SOFTWARE_SUPPORTED_FORK_INDEX};
 use wrkz_primitives::Hash;
 use wrkz_rpc::api::{ApiError, BlockHeaderInfo};
+use wrkz_rpc::readline::Editor;
 use wrkz_rpc::NodeApi;
 
 use crate::compaction::{Compaction, RunResult, Started, StatusReport, Trigger};
@@ -1146,7 +1146,8 @@ fn level_name(level: Level) -> &'static str {
 pub const PROMPT: &str = "wrkz-node> ";
 
 /// The longest line the reader will accept. A terminal in its own line mode
-/// caps a typed line long before this; a paste of a megabyte is neither a
+/// caps a typed line long before this, and the line editor stops at
+/// [`wrkz_rpc::readline::MAX_LINE_BYTES`]; a paste of a megabyte is neither a
 /// command nor something to allocate for.
 const MAX_LINE_BYTES: usize = 8 * 1024;
 
@@ -1191,41 +1192,50 @@ pub fn spawn_reader(console: Arc<Console>) -> bool {
 
 /// Read and run lines until end of input.
 ///
-/// Reads **bytes**, not a `String`: `Stdin::read_line` fails the whole read
-/// with `InvalidData` on a byte that is not UTF-8, and one stray byte — a
-/// Latin-1 paste, a key that sent a raw escape — would have ended the reader
-/// for the rest of the run. A lossy conversion turns it into a replacement
-/// character, the command comes back unknown, and the console carries on.
+/// Through the line editor where the terminal can take one. Otherwise in the
+/// terminal's own line mode, reading **bytes**, not a `String`:
+/// `Stdin::read_line` fails the whole read with `InvalidData` on a byte that is
+/// not UTF-8, and one stray byte — a Latin-1 paste, a key that sent a raw
+/// escape — would have ended the reader for the rest of the run. A lossy
+/// conversion turns it into a replacement character, the command comes back
+/// unknown, and the console carries on.
 fn read_loop(console: &Console) {
     use std::io::BufRead;
 
     log::set_prompt(Some(PROMPT.to_string()));
     log::console_print(&format!("{}\nType `help` for the command list.", console.cfg.version));
+    let mut editor = Editor::new();
     let stdin = std::io::stdin();
     let mut buffer: Vec<u8> = Vec::new();
     loop {
-        buffer.clear();
-        match stdin.lock().read_until(b'\n', &mut buffer) {
-            // End of input: Ctrl-D, or the terminal went away. The daemon keeps
-            // running — the console is an accessory to it, not its owner.
-            Ok(0) => break,
-            Ok(_) => {}
-            Err(e) => {
-                crate::log_warn!("console: stdin error, stopping the reader: {e}");
-                break;
+        // End of input — Ctrl-D, or the terminal went away — stops the reader.
+        // The daemon keeps running: the console is an accessory to it, not its
+        // owner.
+        let line = if let Some(editor) = editor.as_mut() {
+            let Some(line) = editor.read_line(PROMPT) else { break };
+            line
+        } else {
+            buffer.clear();
+            match stdin.lock().read_until(b'\n', &mut buffer) {
+                Ok(0) => break,
+                Ok(_) => {}
+                Err(e) => {
+                    crate::log_warn!("console: stdin error, stopping the reader: {e}");
+                    break;
+                }
             }
-        }
-        if buffer.len() > MAX_LINE_BYTES {
-            log::console_print(&format!(
-                "that line is {} bytes; the console reads at most {MAX_LINE_BYTES}. Ignored.",
-                buffer.len()
-            ));
-            // Nothing is parsed, and the capacity a pasted megabyte grew the
-            // buffer to is given back rather than held for the run.
-            buffer = Vec::new();
-            continue;
-        }
-        let line = String::from_utf8_lossy(&buffer);
+            if buffer.len() > MAX_LINE_BYTES {
+                log::console_print(&format!(
+                    "that line is {} bytes; the console reads at most {MAX_LINE_BYTES}. Ignored.",
+                    buffer.len()
+                ));
+                // Nothing is parsed, and the capacity a pasted megabyte grew the
+                // buffer to is given back rather than held for the run.
+                buffer = Vec::new();
+                continue;
+            }
+            String::from_utf8_lossy(&buffer).into_owned()
+        };
         let outcome = console.run_line(line.trim());
         if outcome.output.is_empty() {
             // A blank line prints nothing, but the terminal has already echoed

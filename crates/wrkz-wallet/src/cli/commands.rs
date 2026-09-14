@@ -229,7 +229,7 @@ pub fn parse_command<T: Listable>(
         term.write(&information(prompt));
         term.flush();
 
-        let Some(raw) = term.read_line() else {
+        let Some(raw) = term.read_command() else {
             // Ctrl+C or a closed stdin.
             return Selection::Exit;
         };

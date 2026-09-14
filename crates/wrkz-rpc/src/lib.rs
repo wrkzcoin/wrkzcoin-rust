@@ -29,6 +29,8 @@
 //!   and `wrkz-service` share (`common/Notifier.cpp`).
 //! - [`signal`] — Ctrl-C, SIGTERM and SIGHUP for the programs that are not the
 //!   daemon, and the console they read while they wait for one.
+//! - [`readline`] — the line editor, with history, that the daemon console,
+//!   `wrkz-node attach` and the wallet's command prompt read through.
 //!
 //! # Field order
 //!
@@ -228,6 +230,7 @@ pub mod metrics;
 pub mod node;
 pub mod notify;
 pub mod probe;
+pub mod readline;
 pub mod server;
 pub mod signal;
 pub mod sync_cache;
