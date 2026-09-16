@@ -235,5 +235,5 @@ servers are thin layers over it (or over `WalletGreen`).
    transaction through it.
 3. xmrig in solo mode mines a block through the port. Against this chain that
    means the built-in stratum server (`--stratum-bind-port`,
-   `docs/DAEMON.md#mining`): xmrig's `--daemon` mode cannot read a Forknote
+   `wrkz-node --help`): xmrig's `--daemon` mode cannot read a Forknote
    template, against the C++ daemon or this one.

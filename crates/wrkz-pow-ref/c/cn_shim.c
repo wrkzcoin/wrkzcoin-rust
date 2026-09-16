@@ -1,3 +1,10 @@
+/* Copyright (c) 2026, The WrkzCoin developers
+ *
+ * Please see the included LICENSE file for more information.
+ *
+ * Not vendored: written for this port. See crates/wrkz-pow-ref/build.rs.
+ */
+
 /* Byte-oriented C port of src/crypto/crypto.cpp (wrkzcoin commit 8d89d7bf)
  * over the vendored ref10 crypto-ops.c, so Rust can call every CryptoNote
  * primitive of spec/03-crypto-primitives.md without C++.

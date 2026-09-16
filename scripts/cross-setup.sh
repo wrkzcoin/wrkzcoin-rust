@@ -6,7 +6,7 @@
 # One-time setup of the cross toolchains on an Ubuntu 22.04/24.04 (or Debian
 # 12) host, so that scripts/cross.sh and scripts/release.sh can build the node
 # and the wallets for Windows, macOS, Android and arm64 Linux from it. Run it
-# after (or instead of) scripts/ubuntu-setup.sh. docs/CROSS-COMPILE.md explains
+# after (or instead of) scripts/ubuntu-setup.sh. The header of scripts/cross.sh explains
 # the choices; in short:
 #
 #   windows      MinGW-w64 with posix threads, linked fully static

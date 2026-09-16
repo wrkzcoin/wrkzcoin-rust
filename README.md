@@ -29,15 +29,16 @@ reference, [wrkzcoin/wrkzcoin](https://github.com/wrkzcoin/wrkzcoin) at commit
 
 `wrkz-replay`, `wrkz-verify-state` and `wrkz-db-inspect` need the `rocksdb`
 feature. Not ported: the C++ `miner` (the node's stratum port is for xmrig
-instead), `wrkz-netmon`, `wallet-upgrader`, `cryptotest` and the `wallet_capi`
-C library.
+instead), `wrkz-netmon`, `wallet-upgrader` and `cryptotest`. The 57-function
+`wallet_capi` C library is not written yet rather than dropped; it is stage 2,
+step 5 of [`spec/12-roadmap.md`](spec/12-roadmap.md).
 
 ## Layout
 
 | Crate | Contents | Spec |
 | --- | --- | --- |
 | `crates/wrkz-pow` | Keccak, the five proofs of work (the CryptoNight family on AES-NI, ARMv8 or table AES; Chukwa on argon2id), tree hash and `check_hash` in Rust, ported from wrkzcoin `8d89d7bf` and tested against its C; every `crypto.cpp` primitive through the C shim of `wrkz-pow-ref` | 02, 03 |
-| `crates/wrkz-pow-ref` | The reference C of wrkzcoin `8d89d7bf`, vendored unchanged under `c/`: the ref10 curve code and Keccak that `wrkz-pow::curve` still calls, and (feature `pow`, tests and fuzzing only) the proof-of-work C that `wrkz-pow` is compared against | 02, 03 |
+| `crates/wrkz-pow-ref` | The reference C of wrkzcoin `8d89d7bf`, vendored unchanged under `c/`: the ref10 curve code and Keccak that `wrkz-pow::curve` still calls, and (feature `pow`, tests and fuzzing only) the proof-of-work C that `wrkz-pow` is compared against. `c/cn_shim.c` and `c/cn_pow_shim.c` are not vendored: they are this port's C stand-ins for the two C++ files it could not copy | 02, 03 |
 | `crates/wrkz-primitives` | Constants, varint, base58/addresses, mnemonics, binary serialization, transactions, blocks and hashing blobs, tx_extra, difficulty, fees, mixins, KV binary | 01, 04, 05, 06, 07 |
 | `crates/wrkz-storage` | The C++ node's RocksDB key layout and record encodings, a typed chain reader with ring-member resolution, the RocksDB engine (feature `rocksdb`, ZSTD) and `wrkz-db-inspect` | 11 |
 | `crates/wrkz-chain` | Chain state, block and transaction validation in the C++ order (signatures and proofs of work checked in parallel), reward with the size penalty, checkpoints, alternative chains and reorganisation, `wrkz-replay` and `wrkz-verify-state` | 06, 07, 11 |
@@ -50,8 +51,11 @@ C library.
 | `crates/wrkz-txpow-server` | `wrkz-txpow-server`: computes the transaction proof of work for wallets that would rather not — phones and browsers | 06 |
 | `apps/pluton` | Rust Pluton Wallet: the wallet with a window, for Windows, macOS, Linux, Android and the browser, on `wrkz-wallet`. Its own workspace, so nothing here pulls in a GUI toolkit | 09, 10 |
 
-`fuzz/` holds libFuzzer targets for every parser that reads bytes from a
-peer, a daemon or a file. See [`fuzz/README.md`](fuzz/README.md).
+`fuzz/` holds libFuzzer targets for the parsers that read bytes this node did
+not produce: a peer's frames, a daemon's answers, an unauthenticated client's
+HTTP request and JSON body, a wallet file, a database handed over and a
+downloaded lite snapshot. See [`fuzz/README.md`](fuzz/README.md), which lists
+each target and the one parser it is not worth pointing at.
 
 ## Build and test
 
@@ -93,9 +97,8 @@ Windows machine and no Apple SDK:
 
 Each archive, `wrkzcoin-cli-<version>-<commit>-<os>-<arch>` (`.zip` for
 Windows, `.tar.gz` otherwise, e.g. `wrkzcoin-cli-1.0.0-97f3ab1-linux-arm64.tar.gz`),
-holds `wrkz-node`, `wrkz-replay`, `wrkz-p2p-probe`, `wrkz-service`,
-`wrkz-txpow-server` and the four wallet programs, next to a `SHA256SUMS` that
-two hosts building the same commit reproduce.
+holds every program in the table above except Rust Pluton Wallet, next to a
+`SHA256SUMS` that two hosts building the same commit reproduce.
 
 Pick platforms by OS (`linux`, `windows`, `macos`, `android`), or build one
 binary while developing:
@@ -145,6 +148,37 @@ With Docker:
     docker build -t wrkz-rust .
     docker run -d --name wrkz -v wrkz-data:/data -p 17855:17855 -p 127.0.0.1:17856:17856 wrkz-rust
 
+## Rust Pluton Wallet
+
+The wallet with a window, on the same `wrkz-wallet` core the command-line
+wallet uses. It is its own workspace (`apps/pluton`), so nothing else here
+pulls in a GUI toolkit, and `--workspace` does not reach it: `scripts/ci.sh
+pluton` lints and tests it separately, and the workflow's `deny` job audits its
+dependency tree with the same `deny.toml`.
+
+To run it while developing:
+
+    cd apps/pluton && cargo run --release
+
+Where OpenGL is missing or broken — an old virtual machine, a locked-down
+desktop — `SLINT_BACKEND=winit-software` draws without the GPU.
+
+One Linux host builds every platform but macOS, into `dist/pluton`:
+
+    scripts/pluton-build.sh                  # linux, windows, android, web
+    scripts/pluton-build.sh android web      # or only the ones named
+
+That needs the Android SDK, a JDK, Gradle and wasm-bindgen on top of the
+cross-toolchains above; they come as an image:
+
+    docker build -f Dockerfile.cross -t wrkz-cross .
+    docker build -f Dockerfile.pluton -t wrkz-pluton .
+    docker run --rm -v "$PWD":/src -v wrkz-cargo:/usr/local/cargo/registry -u "$(id -u):$(id -g)" wrkz-pluton scripts/pluton-build.sh
+
+A Mac app needs Apple's SDK and a Mac to sign on: build it there with
+`scripts/pluton-macos.sh`. Pluton is not in the `wrkzcoin-cli-*` archives;
+its own are named `rust-pluton-wallet-<version>-<commit>-<os>-<arch>`.
+
 ## Verifying consensus
 
 `wrkz-replay` validates real blocks from a C++ database against our
@@ -190,8 +224,13 @@ code grew from — the CryptoNote developers and the Bytecoin developers
 (GPL-3.0). [`LICENSE`](LICENSE) is the C++ repository's own file, unchanged.
 
 `crates/wrkz-pow-ref/c/` is C code copied unchanged from the C++ repository,
-under the same notices and each file's header; its argon2 is MIT
+under the same notices, each file's header and
+[`c/LICENSE`](crates/wrkz-pow-ref/c/LICENSE); its argon2 is MIT
 ([`crates/wrkz-pow-ref/c/argon2/LICENSE`](crates/wrkz-pow-ref/c/argon2/LICENSE)).
+Two files there are not vendored and are this port's own, under this
+repository's licence: `cn_shim.c`, a byte-oriented C port of the C++
+`crypto.cpp`, and `cn_pow_shim.c`, which replaces upstream's C++
+`slow-hash-state.cpp`. `crates/wrkz-pow-ref/compat/` is ours too.
 
 Rust Pluton Wallet draws with [Slint](https://slint.dev), used under Slint's
 GPL-3.0 licence, so a Pluton build is distributed under GPL-3.0; its About page

@@ -112,7 +112,7 @@ fn main() {
     }
     if pow && env::var("CARGO_CFG_TARGET_VENDOR").unwrap_or_default() == "apple" {
         // oaes_lib.c includes <sys/timeb.h>, which the macOS headers zig
-        // carries lack (a macOS build from Linux, docs/CROSS-COMPILE.md).
+        // carries lack (a macOS build from Linux; see scripts/cross-setup.sh).
         // Not vendored code: see compat/apple/sys/timeb.h for why it is safe.
         cn.include("compat/apple");
     }

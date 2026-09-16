@@ -1,3 +1,10 @@
+/* Copyright (c) 2026, The WrkzCoin developers
+ *
+ * Please see the included LICENSE file for more information.
+ *
+ * Not vendored: written for this port. See crates/wrkz-pow-ref/build.rs.
+ */
+
 /* The C++ half of the vendored CryptoNight code, in C. Built only with the
  * `pow` feature, where the proof-of-work C is compiled as a test oracle.
  *

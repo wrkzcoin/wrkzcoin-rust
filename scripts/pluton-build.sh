@@ -20,7 +20,7 @@
 # there with scripts/pluton-macos.sh.
 #
 # Everything this needs is in the image built from Dockerfile.pluton; see
-# docs/PLUTON.md.
+# README.md, "Rust Pluton Wallet".
 set -euo pipefail
 
 # zig's lld opens every object file at once, and the wallet links more than a

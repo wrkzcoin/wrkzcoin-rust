@@ -18,6 +18,7 @@ implementation must reproduce all of it byte for byte.
 | `mainnet_get_global_indexes_for_range.json` | `POST /get_global_indexes_for_range` 4,213,000–4,213,001 | 09, 10 |
 | `mainnet_rawblocks_4213648_to_4213650_v7.json` | `POST /getrawblocks`, blocks 4,213,648–4,213,650 (live tip on 2026-09-09; the last one carries a real wallet transaction: fee 70, ring size 2, PoW nonce) | 02, 04, 06 |
 | `mainnet_headers_4213588_to_4213650.json` | `getblockheaderbyheight` for 63 consecutive blocks ending at the tip; pins LWMA-2 (`nextDifficultyV5`) against the live chain | 07 |
+| `mainnet_headers_99939_to_100001.json` | the same, for 63 consecutive blocks across index 100,000; pins the difficulty algorithm *switch* — the arm `nextDifficultyV4` actually serves there (spec/12, "Things that look like bugs") | 07 |
 
 Block headers (hash, difficulty, nonce, timestamp, reward) for the same
 blocks are tabulated in `../09-rpc-and-wallet-sync.md`.

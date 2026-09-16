@@ -261,8 +261,10 @@ unlocked inputs, bucket by digit count, prefer a bucket with at least 12
 inputs, take up to the count that fits in 30,000 bytes; build a
 zero-fee transaction whose outputs are the decomposition of the input sum
 (`06-transactions.md`, fusion rules) with the 320,000-difficulty proof of
-work. The current front ends do not expose fusion; the C API has no call
-for it.
+work. No C++ front end exposes fusion and the C API has no call for it, so a
+port owes the network nothing here. (Rust Pluton Wallet in this repository
+offers it as "optimize"; the transactions it builds are the ones described
+above, under the consensus rules of `06-transactions.md` and no others.)
 
 ## The C API (`include/walletcapi/wallet_capi.h`)
 

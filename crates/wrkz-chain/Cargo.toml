@@ -41,7 +41,7 @@ path = "src/bin/replay.rs"
 required-features = ["rocksdb"]
 
 # Rebuild a state someone handed you from its own block bodies and compare it
-# record for record (docs/SNAPSHOT.md).
+# record for record; `--help` has the options.
 [[bin]]
 name = "wrkz-verify-state"
 path = "src/bin/verify_state.rs"

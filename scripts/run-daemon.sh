@@ -23,7 +23,7 @@
 #
 #   cargo build --release -p wrkz-node --bin wrkz-node --features rocksdb
 #
-# See docs/DAEMON.md for the recommended way to bring the state up (importing
+# See README.md, "Running a node", for the recommended way to bring the state up (importing
 # the operator's existing C++ database with wrkz-replay) and for the systemd
 # unit.
 set -euo pipefail

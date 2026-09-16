@@ -48,7 +48,7 @@
 #   ./target/release/wrkz-replay --db ~/.WRKZCoin/DB --state ~/.wrkz-rust/state
 #   WRKZ_DATA_DIR=~/.wrkz-rust WRKZ_STATE=import scripts/e2e.sh
 #
-# See docs/DAEMON.md.
+# See README.md, "Running a node".
 set -uo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)

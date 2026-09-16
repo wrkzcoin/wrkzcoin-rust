@@ -6,7 +6,8 @@
 //!
 //! The real acceptance of this feature — importing the published C++ snapshot
 //! at 4,000,000 and exporting the same digest from a real state — needs the
-//! 5 GiB file and a synced node, and is documented in `docs/DAEMON.md`. What
+//! 5 GiB file and a synced node, so it is an operator's run and not a test.
+//! What
 //! can be proven without them is proven here, over a chain short enough to
 //! build in a test and long enough to cross a lite height with real spends on
 //! both sides of it:

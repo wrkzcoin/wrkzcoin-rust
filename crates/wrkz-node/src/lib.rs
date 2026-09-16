@@ -50,7 +50,7 @@
 //!
 //! `src/bin/node.rs` is the deployable daemon: it opens the chain state, starts
 //! the engine and starts `wrkz-rpc` on the same state, behind one
-//! [`SharedChain`] and one [`SharedPool`]. See `docs/DAEMON.md`.
+//! [`SharedChain`] and one [`SharedPool`]; the lock order is below.
 //!
 //! # What this crate does not do
 //!
