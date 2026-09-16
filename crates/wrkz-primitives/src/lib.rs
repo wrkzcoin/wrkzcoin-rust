@@ -17,6 +17,8 @@
 //! - [`fees`], [`mixins`] — fee ladder and mixin tiers (spec 06)
 //! - [`kv`] — the KV binary "portable storage" format used by P2P and the database (spec 04)
 
+#![forbid(unsafe_code)]
+
 pub mod base58;
 pub mod block;
 pub mod constants;

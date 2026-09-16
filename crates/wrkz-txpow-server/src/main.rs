@@ -8,9 +8,11 @@
 //! wrkz-txpow-server --bind-ip 0.0.0.0 --bind-port 17870 --threads 8
 //! ```
 //!
-//! docs/TXPOW-SERVER.md has every option, the reverse-proxy set-up and the
+//! `--help` lists every option, and [`wrkz_txpow_server`] describes the
 //! protocol. Exit codes: `0` after a clean shutdown, `1` for a bad option, a
 //! log file that cannot be opened, or a port that cannot be bound.
+
+#![forbid(unsafe_code)]
 
 use std::process::ExitCode;
 use std::sync::Arc;

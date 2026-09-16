@@ -10,7 +10,7 @@
 //! Route for route, option for option and default for default the C++ server
 //! (`src/txpowserver`), so a wallet — this repository's
 //! `wrkz_wallet::txpow::TxPowServer` or the C++ `TxPowClient` — cannot tell
-//! them apart. docs/TXPOW-SERVER.md is the operator's guide.
+//! them apart. `wrkz-txpow-server --help` lists every option.
 //!
 //! - [`config`] — the command line (`TxPowServerConfig.cpp`).
 //! - [`service`] — the job queue and the hashing threads (`PowService.cpp`).
@@ -19,6 +19,8 @@
 //! - [`log`] — levelled log lines to the console and optionally a file.
 //!
 //! Ctrl-C and SIGTERM are `wrkz_rpc::signal`, which the wallet programs share.
+
+#![forbid(unsafe_code)]
 
 pub mod api;
 pub mod config;
