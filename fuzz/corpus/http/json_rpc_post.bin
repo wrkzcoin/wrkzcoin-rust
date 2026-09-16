@@ -1,0 +1,7 @@
+POST /json_rpc HTTP/1.1
+Host: 127.0.0.1:17856
+Content-Type: application/json
+Accept-Encoding: gzip
+Content-Length: 2
+
+{}

@@ -13,6 +13,17 @@ wrkz-primitives = { path = "../crates/wrkz-primitives" }
 wrkz-p2p = { path = "../crates/wrkz-p2p" }
 wrkz-pow = { path = "../crates/wrkz-pow" }
 wrkz-pow-ref = { path = "../crates/wrkz-pow-ref", features = ["pow"] }
+# The daemon's hand-written HTTP/1.1 and JSON parsers, which read a public
+# socket, and the record decoders that read a database someone handed over.
+wrkz-rpc = { path = "../crates/wrkz-rpc" }
+wrkz-storage = { path = "../crates/wrkz-storage" }
+# `lite-snapshot` for the `.litesnap` container an operator downloads.
+wrkz-chain = { path = "../crates/wrkz-chain", features = ["lite-snapshot"] }
+# The peer state file, read at start-up before the node has spoken to anybody.
+wrkz-node = { path = "../crates/wrkz-node" }
+# The wallet container's JSON schema. No front ends and no HTTP client: the
+# file format is the whole of what is fuzzed here.
+wrkz-wallet = { path = "../crates/wrkz-wallet", default-features = false }
 
 # Each target is a separate binary; `cargo fuzz list` enumerates them.
 [[bin]]
@@ -53,6 +64,48 @@ bench = false
 [[bin]]
 name = "pow_diff"
 path = "fuzz_targets/pow_diff.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "json"
+path = "fuzz_targets/json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "http"
+path = "fuzz_targets/http.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wallet_file"
+path = "fuzz_targets/wallet_file.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "db_records"
+path = "fuzz_targets/db_records.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "peer_state"
+path = "fuzz_targets/peer_state.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "lite_snapshot"
+path = "fuzz_targets/lite_snapshot.rs"
 test = false
 doc = false
 bench = false

@@ -1,0 +1,4 @@
+GET /info HTTP/1.1
+Host: node-fin.wrkz.work:17856
+Connection: keep-alive
+
