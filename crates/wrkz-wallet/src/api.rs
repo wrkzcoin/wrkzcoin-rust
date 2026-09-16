@@ -226,6 +226,8 @@ pub struct ApiConfig {
     /// `--scan-coinbase-transactions` was given; that flag is still accepted
     /// and changes nothing.
     pub skip_coinbase_transactions: bool,
+    /// `--sync-windows` ([`crate::sync::SyncConfig::height_windows`]).
+    pub sync_windows: bool,
 }
 
 impl Default for ApiConfig {
@@ -247,6 +249,7 @@ impl Default for ApiConfig {
             tx_notify: String::new(),
             notify_during_sync: false,
             skip_coinbase_transactions: false,
+            sync_windows: false,
         }
     }
 }
@@ -706,6 +709,7 @@ impl ApiState {
     ) -> std::result::Result<OpenWallet, String> {
         let sync = SyncConfig {
             skip_coinbase_transactions: self.config.skip_coinbase_transactions,
+            height_windows: self.config.sync_windows,
             scan_threads: self.config.threads.max(1) as usize,
             ..SyncConfig::default()
         };

@@ -8,7 +8,7 @@
 //! ```text
 //! wrkz-wallet [-w mine] [-p secret] [-r node-fin.wrkz.work:17856]
 //!             [--log-level 2] [--log-file wallet.log]
-//!             [--threads 4] [--skip-coinbase-transactions]
+//!             [--threads 4] [--skip-coinbase-transactions] [--sync-windows]
 //! ```
 //!
 //! The interface itself is [`wrkz_wallet::cli`]; this binary is the argument
@@ -61,6 +61,9 @@ Wallet:
       --skip-coinbase-transactions  Do not scan miner/coinbase transactions (alias: --skip-coinbase). Syncs
                                     faster, but block rewards paid to this wallet are not seen
       --scan-coinbase-transactions  Scan miner/coinbase transactions (the default; kept for compatibility)
+      --sync-windows                Far below the tip, ask the daemon for four height windows a round
+                                    instead of one. Fewer round trips on a long first sync; needs a
+                                    daemon that offers the `heightRange` sync feature
 ";
 
 enum Parsed {
@@ -95,6 +98,7 @@ fn parse_arguments<I: Iterator<Item = String>>(args: I) -> Parsed {
             "-v" | "--version" => version = true,
             "--ssl" => config.ssl = true,
             "--skip-coinbase-transactions" | "--skip-coinbase" => config.skip_coinbase_transactions = true,
+            "--sync-windows" => config.sync_windows = true,
             // Coinbases are scanned by default; kept so old command lines run.
             "--scan-coinbase-transactions" => {}
 
@@ -326,6 +330,17 @@ mod tests {
             panic!("should parse")
         };
         assert!(config.skip_coinbase_transactions);
+    }
+
+    #[test]
+    fn the_height_window_download_is_off_unless_asked_for() {
+        let Parsed::Run(config) = parse(&[]) else { panic!("should parse") };
+        assert!(!config.sync_windows);
+        assert!(!wrkz_wallet::cli::menu::sync_config(&config).height_windows);
+
+        let Parsed::Run(config) = parse(&["--sync-windows"]) else { panic!("should parse") };
+        assert!(config.sync_windows);
+        assert!(wrkz_wallet::cli::menu::sync_config(&config).height_windows);
     }
 
     #[test]

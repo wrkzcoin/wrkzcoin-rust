@@ -718,7 +718,14 @@ pub struct SyncConfig {
     /// Slept between those retries. Zero in tests.
     pub global_index_retry_delay: Duration,
     /// Whether to use the height-window path far below the tip
-    /// (`downloadBlocksInParallel`). Off by default; see
+    /// (`downloadBlocksInParallel`): `--sync-windows` on `wrkz-wallet`,
+    /// `wrkz-wallet-api` and `wrkz-wallet-sync`.
+    ///
+    /// Off by default because it asks a daemon for four windows of up to
+    /// 50,000 heights each per round rather than one batch, which a public
+    /// node may rate limit — and a `429` costs twenty seconds, more than the
+    /// round trips it saved. On a daemon of your own, or on a long first sync
+    /// where the round trip dominates, turn it on. See
     /// `Synchronizer::download_height_windows`.
     pub height_windows: bool,
     /// `WalletConfig::syncRequestConcurrency` (4): windows per round.

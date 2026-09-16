@@ -11,6 +11,7 @@
 //!                 [--rpc-ipc-path /run/wrkz/wallet-api.sock]
 //!                 [--enable-cors '*'] [--log-level 3] [--log-file api.log]
 //!                 [--no-console] [--threads 4] [--skip-coinbase-transactions]
+//!                 [--sync-windows]
 //! ```
 //!
 //! Every route and every response body lives in [`wrkz_wallet::api`]; this
@@ -59,6 +60,9 @@ Core:
       --skip-coinbase-transactions  Do not scan miner/coinbase transactions (alias: --skip-coinbase). Syncs
                                     faster, but block rewards paid to the wallet are not seen
       --threads #                   Specify number of wallet sync threads (default: one per core, at most 16)
+      --sync-windows                Far below the tip, ask the daemon for four height windows a round
+                                    instead of one. Fewer round trips on a long first sync; needs a
+                                    daemon that offers the `heightRange` sync feature
   -v, --version                     Output software version information
 
 Network:
@@ -122,6 +126,7 @@ fn parse_arguments<I: Iterator<Item = String>>(args: I) -> Parsed {
             "-v" | "--version" => version = true,
             "--no-console" => config.no_console = true,
             "--skip-coinbase-transactions" | "--skip-coinbase" => config.skip_coinbase_transactions = true,
+            "--sync-windows" => config.sync_windows = true,
             // Coinbases are scanned by default; kept so old command lines run.
             "--scan-coinbase-transactions" => {}
             "--rpc-use-ipv6" => config.rpc_use_ipv6 = true,
@@ -470,6 +475,15 @@ mod tests {
             panic!("should parse")
         };
         assert!(config.skip_coinbase_transactions);
+    }
+
+    #[test]
+    fn the_height_window_download_is_off_unless_asked_for() {
+        let Parsed::Run(config) = parse(&["-r", "x"]) else { panic!("should parse") };
+        assert!(!config.sync_windows);
+
+        let Parsed::Run(config) = parse(&["-r", "x", "--sync-windows"]) else { panic!("should parse") };
+        assert!(config.sync_windows);
     }
 
     #[test]

@@ -12,7 +12,8 @@
 //!     --view-key <64 hex> \
 //!     --address Wrkz... \
 //!     --scan-height 4200000 \
-//!     [--out view.wallet] [--password secret] [--max-steps 100000] [--skip-coinbase] [--quiet]
+//!     [--out view.wallet] [--password secret] [--max-steps 100000] [--skip-coinbase]
+//!     [--sync-windows] [--quiet]
 //! ```
 //!
 //! The wallet built here is view-only: it finds incoming outputs and their
@@ -42,6 +43,7 @@ wrkz-wallet-sync — view-sync an address and print its transactions and balance
     --password PASS      password for --out (default: empty)
     --max-steps N        stop after N sync rounds (default: unlimited)
     --skip-coinbase      do not scan coinbase transactions
+    --sync-windows       ask for four height windows a round far below the tip
     --quiet              no progress lines on stderr
 ";
 
@@ -54,6 +56,7 @@ struct Args {
     password: String,
     max_steps: usize,
     skip_coinbase: bool,
+    sync_windows: bool,
     quiet: bool,
 }
 
@@ -67,6 +70,7 @@ fn parse_args() -> Result<Args, String> {
         password: String::new(),
         max_steps: usize::MAX,
         skip_coinbase: false,
+        sync_windows: false,
         quiet: false,
     };
 
@@ -90,6 +94,7 @@ fn parse_args() -> Result<Args, String> {
                 args.max_steps = v.parse().map_err(|_| format!("--max-steps {v} is not a number"))?;
             }
             "--skip-coinbase" => args.skip_coinbase = true,
+            "--sync-windows" => args.sync_windows = true,
             "--quiet" => args.quiet = true,
             "-h" | "--help" => return Err(String::new()),
             other => return Err(format!("unknown argument {other}")),
@@ -149,7 +154,11 @@ fn main() -> ExitCode {
         }
     };
 
-    let config = SyncConfig { skip_coinbase_transactions: args.skip_coinbase, ..SyncConfig::default() };
+    let config = SyncConfig {
+        skip_coinbase_transactions: args.skip_coinbase,
+        height_windows: args.sync_windows,
+        ..SyncConfig::default()
+    };
     let mut sync = Synchronizer::with_config(daemon, wallet, config);
 
     if let Err(e) = sync.refresh_info() {

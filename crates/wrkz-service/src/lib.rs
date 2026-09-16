@@ -23,7 +23,7 @@
 //! container from `wrkz-wallet`, `wrkz-wallet-api` or Pluton opens as it is.
 //! A WalletGreen container from the C++ service does not, and no converter is
 //! planned here; the C++ `wrkz-walletupgrader` handles the case if one ever
-//! turns up. Said here, in `--help` and in `docs/SERVICE.md`, because it is
+//! turns up. Said here and in `--help`, because it is
 //! the one thing that is not drop-in.
 //!
 //! Two consequences follow from the container, and both are answered rather
@@ -141,6 +141,9 @@ pub struct ServiceConfig {
     /// `--skip-coinbase-transactions`. Coinbases are scanned unless this is
     /// set, as in `wrkz-wallet-api`.
     pub skip_coinbase_transactions: bool,
+    /// `--sync-windows`, as in `wrkz-wallet-api`
+    /// ([`wrkz_wallet::sync::SyncConfig::height_windows`]).
+    pub sync_windows: bool,
 }
 
 impl Default for ServiceConfig {
@@ -166,6 +169,7 @@ impl Default for ServiceConfig {
             notify_during_sync: false,
             scan_height: 0,
             skip_coinbase_transactions: false,
+            sync_windows: false,
         }
     }
 }

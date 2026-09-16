@@ -98,12 +98,13 @@ pub fn rebuild_daemon(open: &mut OpenWallet, host: &str, port: u16, ssl: bool) -
 }
 
 /// The synchronizer the command line asks for: `--threads` scanning threads,
-/// the thread count zedwallet++ hands `WalletBackend::openWallet`, and
-/// `--skip-coinbase-transactions`.
+/// the thread count zedwallet++ hands `WalletBackend::openWallet`,
+/// `--skip-coinbase-transactions` and `--sync-windows`.
 pub fn sync_config(config: &ZedConfig) -> SyncConfig {
     SyncConfig {
         skip_coinbase_transactions: config.skip_coinbase_transactions,
         scan_threads: config.threads.max(1) as usize,
+        height_windows: config.sync_windows,
         ..SyncConfig::default()
     }
 }

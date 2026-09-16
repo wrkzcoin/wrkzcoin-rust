@@ -52,6 +52,7 @@ Wallet
   --scan-height <n>          with -g: start scanning at this height
   --address                  print the container's addresses and exit
   --skip-coinbase-transactions   do not scan coinbase outputs
+  --sync-windows             ask for four height windows a round far below the tip
 
 Network
   --bind-address <ip>        interface for the RPC (default 127.0.0.1)
@@ -168,14 +169,19 @@ fn run() -> Result<i32, String> {
 
     start_logging(&args.cfg)?;
 
-    let open = wrkz_wallet::api::open_container(
+    let sync = wrkz_wallet::sync::SyncConfig {
+        skip_coinbase_transactions: args.cfg.skip_coinbase_transactions,
+        height_windows: args.cfg.sync_windows,
+        ..wrkz_wallet::sync::SyncConfig::default()
+    };
+    let open = wrkz_wallet::api::open_container_with(
         wallet,
         args.cfg.container_file.clone(),
         Zeroizing::new(args.cfg.container_password.clone()),
         args.cfg.daemon_address.clone(),
         args.cfg.daemon_port,
         args.cfg.daemon_ssl,
-        args.cfg.skip_coinbase_transactions,
+        sync,
         &wrkz_service::real_daemon_factory(),
     )
     .map_err(|e| format!("cannot reach the daemon: {e}"))?;
@@ -359,6 +365,7 @@ fn dump(cfg: &ServiceConfig) -> String {
     line("notify-during-sync", cfg.notify_during_sync.to_string());
     line("scan-height", cfg.scan_height.to_string());
     line("skip-coinbase-transactions", cfg.skip_coinbase_transactions.to_string());
+    line("sync-windows", cfg.sync_windows.to_string());
     out
 }
 
@@ -373,6 +380,7 @@ const SWITCHES: &[&str] = &[
     "skip-coinbase-transactions",
     "skip-coinbase",
     "scan-coinbase-transactions",
+    "sync-windows",
 ];
 
 /// `--config <file>`: `key=value` a line and the same key names
@@ -472,6 +480,7 @@ fn parse(argv: &[String]) -> Result<Args, String> {
             "--daemon-ssl" => args.cfg.daemon_ssl = true,
             "--notify-during-sync" => args.cfg.notify_during_sync = true,
             "--skip-coinbase-transactions" | "--skip-coinbase" => args.cfg.skip_coinbase_transactions = true,
+            "--sync-windows" => args.cfg.sync_windows = true,
             // Accepted and ignored, as in `wrkz-wallet-api`: coinbases are
             // scanned by default here.
             "--scan-coinbase-transactions" => {}
