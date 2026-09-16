@@ -14,7 +14,7 @@
 //! - the **RPC server** (`wrkz_rpc`), a bounded pool of worker threads that
 //!   only ever read the chain;
 //! - one **chain state** behind an `RwLock` and one **transaction pool** behind
-//!   a `Mutex`, shared by both. See `docs/DAEMON.md` for the reasoning.
+//!   a `Mutex`, shared by both; [`wrkz_node`] explains the lock order.
 //!
 //! The chain state lives in memory unless the crate is built with
 //! `--features rocksdb`, in which case `--data-dir DIR` also holds `DIR/state`,
@@ -286,8 +286,8 @@ wrkz-node attach SOCKET      a console for a daemon already running here, over
   --log-file PATH            also append every line to this file
   --log-format FORMAT        text (default) or json: one JSON object a line,
                              for a log shipper
-  --no-console              do not read commands on stdin, and do not print
-                             the periodic status line
+  --no-console               do not read commands on stdin; the periodic
+                             progress line is printed either way
   --attach SOCKET            attach a console to a running daemon instead of
                              starting one (the same as `attach SOCKET`)
   --sync-to HEIGHT           stop once the chain reaches this block index
@@ -1580,7 +1580,7 @@ fn serve<S: KvStore + Send + Sync + 'static>(
     }
     // A state a windowed replay wrote is full of holes and must never be
     // served; one a linear replay wrote is a complete chain and is the
-    // recommended way to bring a node up (docs/DAEMON.md).
+    // recommended way to bring a node up (README.md, "Running a node").
     daemon::check_state_tag(chain.tag().map_err(|e| format!("chain state: {e}"))?.as_deref())?;
     if chain.tip_index().is_none() {
         return Err("chain state has no genesis block".to_string());
@@ -1934,6 +1934,7 @@ fn serve<S: KvStore + Send + Sync + 'static>(
     }
 
     let mut line = StatusLine::new(STATUS_INTERVAL, node.height());
+    let mut last_timings = node.chain().timings();
     let tick = args.cfg.tick_interval;
     let mut auto_prune = daemon::AutoPrune::new(args.auto_prune_min_gap_blocks, args.auto_prune_min_free_bytes);
     // One pass never blocks the loop for long: 10,000 keys is what the C++
@@ -2013,15 +2014,23 @@ fn serve<S: KvStore + Send + Sync + 'static>(
             node.relay_transactions(&relay);
         }
 
-        if args.console {
+        // The progress line. Printed whatever `--no-console` says: a daemon
+        // under systemd has no operator at a keyboard but its log is the only
+        // place anyone can see it sync.
+        if line.due() {
             let pool_size = pool.lock().unwrap_or_else(|p| p.into_inner()).len();
+            let timings = node.chain().timings();
+            let phases = daemon::phase_line(&last_timings, &timings);
+            last_timings = timings;
             let snapshot = StatusSnapshot {
                 height,
                 network_height,
                 incoming,
                 outgoing,
                 pool: pool_size,
+                syncing: node.peer_states().iter().filter(|(_, state)| state.is_syncing()).count(),
                 synced: node.is_synchronized(),
+                phases,
             };
             if let Some(text) = line.tick(&snapshot) {
                 log_info!("{text}");

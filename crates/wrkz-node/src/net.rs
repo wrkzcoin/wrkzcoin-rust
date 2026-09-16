@@ -300,6 +300,10 @@ pub enum Event {
     BackPing { id: ConnId, ip: IpAddr, port: u32, peer_id: u64, ok: bool },
     /// The periodic wake-up: timed sync, the connection maker, bookkeeping.
     Tick,
+    /// A seed re-resolution finished (`Node::maybe_reresolve_seeds`). The
+    /// lookup runs on a thread of its own because a resolver that does not
+    /// answer would otherwise hold the one thread that applies blocks.
+    SeedsResolved { seeds: Vec<SocketAddr> },
 }
 
 /// Hands out connection ids.

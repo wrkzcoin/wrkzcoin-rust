@@ -10,8 +10,11 @@
 //! - **stdin is not a terminal** (a pipe here, `/dev/null` under systemd): the
 //!   reader is not started at all, and the daemon runs exactly as it did before
 //!   the console existed;
-//! - **`--no-console`**: the same, plus the periodic status line stays off,
-//!   which is what the flag has always meant.
+//! - **`--no-console`**: the same. The flag turns off the *console* — the
+//!   reader on stdin — and nothing else. The periodic progress line is not a
+//!   console feature and is printed either way: a daemon under systemd is
+//!   started with this flag and its log is the only place anyone can watch it
+//!   sync.
 //!
 //! Both runs are offline — no listener, no seeds, no RPC — so nothing here
 //! touches the network. They are killed after they have proved they are up.

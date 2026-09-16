@@ -340,6 +340,24 @@ pub const P2P_DEFAULT_CONNECTION_TIMEOUT_MS: u64 = 5000;
 pub const P2P_DEFAULT_PING_CONNECTION_TIMEOUT_MS: u64 = 2000;
 pub const P2P_DEFAULT_INVOKE_TIMEOUT_MS: u64 = 120_000;
 pub const P2P_DEFAULT_HANDSHAKE_INVOKE_TIMEOUT_MS: u64 = 5000;
+/// `P2P_SEED_RERESOLVE_INTERVAL_SECONDS` (`CryptoNoteConfig.h:589`): how often
+/// a node that is short of outbound peers resolves its seed names again.
+///
+/// The seeds are host names — `DNS_SEED_NODES` is an A/AAAA record set that
+/// rotates — so resolving once at start-up leaves a node holding addresses
+/// that may already be gone, and a node whose resolver was not up yet holding
+/// none at all, for as long as the process runs.
+pub const P2P_SEED_RERESOLVE_INTERVAL_SECONDS: u64 = 3600;
+/// `P2P_SEED_RETRY_INTERVAL_SECONDS` (`CryptoNoteConfig.h:588`): how often a
+/// node that knows **no** seed address at all tries the names again. Shorter
+/// than [`P2P_SEED_RERESOLVE_INTERVAL_SECONDS`] because a node in that state,
+/// with nothing in its peer list either, is not on the network and cannot get
+/// on it until one resolves.
+pub const P2P_SEED_RETRY_INTERVAL_SECONDS: u64 = 300;
+/// `P2P_SEED_RETRY_OUT_PEERS_FLOOR` (`CryptoNoteConfig.h:590`): the outbound
+/// connection count at or below which the seeds are worth going back to. A
+/// node with more than this has the network and does not need them.
+pub const P2P_SEED_RETRY_OUT_PEERS_FLOOR: usize = 3;
 pub const BLOCKS_IDS_SYNCHRONIZING_DEFAULT_COUNT: usize = 10_000;
 pub const BLOCKS_SYNCHRONIZING_DEFAULT_COUNT: usize = 100;
 pub const BLOCKS_SYNCHRONIZING_MAX_COUNT: usize = 10_000;

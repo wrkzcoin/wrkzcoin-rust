@@ -13,6 +13,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use wrkz_chain::Timings;
+
 /// The tag `wrkz-replay` writes for a **linear** replay: a chain validated from
 /// genesis, block by block, which is a complete chain safe to serve.
 pub const TAG_LINEAR: &str = "linear";
@@ -34,7 +36,8 @@ pub const TAG_LITE_SNAPSHOT_IMPORTING: &str = wrkz_chain::keys::TAG_LITE_SNAPSHO
 ///   by syncing. `wrkz-replay` refuses to adopt an untagged directory that
 ///   already holds blocks, so an untagged non-empty state came from a daemon.
 /// - `"linear"` — `wrkz-replay --state DIR` from a C++ database, validated from
-///   genesis. This is the recommended way to bring a node up (`docs/DAEMON.md`).
+///   genesis. This is the recommended way to bring a node up (README.md,
+///   "Running a node").
 /// - `"lite-snapshot"` — `--import-lite-snapshot`, finished. Served as the lite
 ///   node it is: the state records its lite height, so it opens only with the
 ///   matching `--lite --lite-height`, and every transaction question below that
@@ -452,10 +455,16 @@ impl Shutdown {
     }
 }
 
-/// The periodic line an operator watches while a node syncs.
+/// The periodic line an operator watches while a node syncs, and the only one:
+/// height and percentage, the connection split, how many peers are pulling the
+/// chain, the pool, the rate, the estimate and where `add_block` spent its
+/// time.
 ///
 /// Rate is measured over the interval, not since start, so a node that stalls
-/// reports 0 blocks/s rather than a comfortable average.
+/// reports 0 blocks/s rather than a comfortable average. The engine used to
+/// print a second line of its own beside this one, on its own cadence and with
+/// a rate measured since start-up; two lines that disagreed about the same
+/// number is worse than one that does not.
 pub struct StatusLine {
     interval: Duration,
     last: Instant,
@@ -465,6 +474,12 @@ pub struct StatusLine {
 impl StatusLine {
     pub fn new(interval: Duration, height: u32) -> Self {
         Self { interval, last: Instant::now(), last_height: height }
+    }
+
+    /// Whether the interval has elapsed, so a caller can skip building the
+    /// parts of a [`StatusSnapshot`] that cost a lock.
+    pub fn due(&self) -> bool {
+        self.last.elapsed() >= self.interval
     }
 
     /// The line to print, or `None` when the interval has not elapsed.
@@ -485,16 +500,45 @@ impl StatusLine {
         } else {
             String::new()
         };
+        let percent = if s.network_height == 0 || s.height >= s.network_height {
+            String::new()
+        } else {
+            format!(" ({:.1}%)", s.height as f64 * 100.0 / s.network_height as f64)
+        };
+        let syncing = if s.syncing == 0 { String::new() } else { format!(" ({} syncing)", s.syncing) };
         Some(format!(
-            "height {}{target}  peers {}in/{}out  pool {}  {:.1} blocks/s{eta}{}",
+            "height {}{target}{percent}  peers {}in/{}out{syncing}  pool {}  {:.1} blocks/s{eta}{}{}",
             s.height,
             s.incoming,
             s.outgoing,
             s.pool,
             rate,
-            if s.synced { "  (synced)" } else { "" }
+            if s.synced { "  (synced)" } else { "" },
+            s.phases,
         ))
     }
+}
+
+/// The per-block cost of each `add_block` phase over the blocks added since
+/// `before`, for the status line; empty when none were.
+///
+/// The daemon loop keeps the previous [`wrkz_chain::Timings`] and diffs it
+/// here, so what is printed is the cost over the interval rather than the
+/// average since the node came up — which, on a node that has been at the tip
+/// for a week, is a number about a week old.
+pub fn phase_line(before: &Timings, now: &Timings) -> String {
+    let blocks = now.blocks.saturating_sub(before.blocks);
+    if blocks == 0 {
+        return String::new();
+    }
+    let us = |a: Duration, b: Duration| a.saturating_sub(b).as_secs_f64() * 1e6 / blocks as f64;
+    format!(
+        " | per block: decode {:.0}us validate {:.0}us commit {:.0}us total {:.0}us",
+        us(now.decode, before.decode),
+        us(now.validate, before.validate),
+        us(now.commit, before.commit),
+        us(now.total, before.total)
+    )
 }
 
 /// A coarse duration for a human: the two largest units, no more.
@@ -571,7 +615,7 @@ impl LiteDepthCheck {
 }
 
 /// What the status line prints.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct StatusSnapshot {
     /// A **count**, as `/height` reports it.
     pub height: u32,
@@ -579,7 +623,11 @@ pub struct StatusSnapshot {
     pub incoming: usize,
     pub outgoing: usize,
     pub pool: usize,
+    /// Connections pulling the chain right now (`PeerState::is_syncing`).
+    pub syncing: usize,
     pub synced: bool,
+    /// What [`phase_line`] produced for this interval, or `""`.
+    pub phases: String,
 }
 
 /// Open a log file for appending, creating it and its directory.
@@ -717,19 +765,55 @@ mod tests {
     #[test]
     fn the_status_line_reports_the_rate_over_the_interval() {
         let mut line = StatusLine::new(Duration::ZERO, 100);
-        let s = StatusSnapshot { height: 160, network_height: 1000, incoming: 2, outgoing: 3, pool: 4, synced: false };
+        let s = StatusSnapshot {
+            height: 160,
+            network_height: 1000,
+            incoming: 2,
+            outgoing: 3,
+            pool: 4,
+            syncing: 2,
+            synced: false,
+            phases: String::new(),
+        };
         let text = line.tick(&s).expect("the interval has elapsed");
-        assert!(text.starts_with("height 160/1000  peers 2in/3out  pool 4  "), "{text}");
+        assert!(text.starts_with("height 160/1000 (16.0%)  peers 2in/3out (2 syncing)  pool 4  "), "{text}");
         assert!(text.contains("blocks/s"));
         assert!(!text.contains("(synced)"));
-        // A node at the network height reports no target and says so.
-        let s = StatusSnapshot { height: 1000, network_height: 1000, synced: true, ..s };
+        // A node at the network height reports no target, no percentage, no
+        // syncing peers, and says it is synced.
+        let s = StatusSnapshot {
+            height: 1000,
+            network_height: 1000,
+            syncing: 0,
+            synced: true,
+            phases: " | per block: total 9us".into(),
+            ..s
+        };
         let text = line.tick(&s).unwrap();
-        assert!(text.starts_with("height 1000  "), "{text}");
-        assert!(text.ends_with("(synced)"));
-        // Nothing before the interval elapses.
+        assert!(text.starts_with("height 1000  peers 2in/3out  "), "{text}");
+        assert!(text.ends_with("(synced) | per block: total 9us"), "{text}");
+        // Nothing before the interval elapses, and `due` agrees with `tick`.
         let mut slow = StatusLine::new(Duration::from_secs(3600), 0);
+        assert!(!slow.due());
         assert!(slow.tick(&s).is_none());
+        assert!(StatusLine::new(Duration::ZERO, 0).due());
+    }
+
+    /// The per-phase costs over the interval, not since the start.
+    #[test]
+    fn the_phase_line_reports_the_interval() {
+        let at = |blocks, us: u64| Timings {
+            blocks,
+            decode: Duration::from_micros(us),
+            validate: Duration::from_micros(10 * us),
+            commit: Duration::from_micros(2 * us),
+            total: Duration::from_micros(13 * us),
+            ..Default::default()
+        };
+        assert_eq!(phase_line(&at(5, 100), &at(5, 100)), "", "no blocks, no line");
+        let line = phase_line(&at(10, 1_000), &at(20, 2_000));
+        assert_eq!(line, " | per block: decode 100us validate 1000us commit 200us total 1300us");
+        assert_eq!(phase_line(&at(20, 2_000), &Timings::default()), "", "a reset is not a negative interval");
     }
 
     #[test]

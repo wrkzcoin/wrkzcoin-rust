@@ -33,7 +33,7 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant};
 
-use wrkz_chain::{AddOutcome, AddStatus, ChainError, ChainState, PowHint, Rule, Timings};
+use wrkz_chain::{AddOutcome, AddStatus, ChainError, ChainState, PowHint, Rule};
 use wrkz_p2p::conn;
 use wrkz_p2p::levin::{self, Header};
 use wrkz_p2p::msg::{self, BasicNodeData, CoreSyncData, LiteBlock, MissingTxs, NewBlock, RawBlockLegacy};
@@ -41,7 +41,8 @@ use wrkz_primitives::block::BlockTemplate;
 use wrkz_primitives::constants::{
     CRYPTONOTE_NETWORK, P2P_CURRENT_VERSION, P2P_DEFAULT_CONNECTIONS_COUNT, P2P_DEFAULT_PEERS_IN_HANDSHAKE,
     P2P_DEFAULT_PORT, P2P_IPV6_CAPABILITY_VERSION, P2P_LITE_BLOCKS_PROPOGATION_VERSION, P2P_MINIMUM_VERSION,
-    P2P_NET_DATA_FILENAME, SEED_NODES,
+    P2P_NET_DATA_FILENAME, P2P_SEED_RERESOLVE_INTERVAL_SECONDS, P2P_SEED_RETRY_INTERVAL_SECONDS,
+    P2P_SEED_RETRY_OUT_PEERS_FLOOR, SEED_NODES,
 };
 use wrkz_primitives::Hash;
 use wrkz_rpc::events::{AppliedBlock, Events};
@@ -62,8 +63,6 @@ use crate::{log_debug, log_error, log_info, log_trace, log_warn};
 const TICK: Duration = Duration::from_millis(500);
 /// How often the peer state file is rewritten (`m_peerlist_store_interval`).
 const PEERLIST_STORE_INTERVAL: Duration = Duration::from_secs(60);
-/// How often the progress line is printed.
-const PROGRESS_INTERVAL: Duration = Duration::from_secs(10);
 /// The most block bytes one `NOTIFY_RESPONSE_GET_OBJECTS` answer carries.
 /// The C++ closes a connection whose write queue passes 32 MiB with the new
 /// message counted (`NetNode.cpp:181`), so an answer at the 48 MB sync budget
@@ -433,23 +432,6 @@ fn tx_batches(blobs: &[Vec<u8>]) -> Vec<&[Vec<u8>]> {
     out
 }
 
-/// The per-block cost of each `add_block` phase over the blocks added since
-/// `before`, for the progress line; empty when none were.
-fn phase_line(before: &Timings, now: &Timings) -> String {
-    let blocks = now.blocks.saturating_sub(before.blocks);
-    if blocks == 0 {
-        return String::new();
-    }
-    let us = |a: Duration, b: Duration| a.saturating_sub(b).as_secs_f64() * 1e6 / blocks as f64;
-    format!(
-        " | per block: decode {:.0}us validate {:.0}us commit {:.0}us total {:.0}us",
-        us(now.decode, before.decode),
-        us(now.validate, before.validate),
-        us(now.commit, before.commit),
-        us(now.total, before.total)
-    )
-}
-
 /// The node.
 pub struct Node<S: KvStore, P: TxPool> {
     chain: SharedChain<S>,
@@ -481,15 +463,20 @@ pub struct Node<S: KvStore, P: TxPool> {
     sync_claimed: bool,
     /// Anchors from the last run, dialled before anything else.
     anchors: Vec<SocketAddr>,
-    /// The chain's phase timings at the last progress line.
-    last_timings: Timings,
     started: bool,
     stop: bool,
     last_tick: Instant,
     last_peerlist_store: Instant,
-    last_progress: Instant,
+    /// Where and when this run started, for the one average worth keeping: the
+    /// blocks a second the whole run managed, printed once on the way out.
+    /// The line an operator watches while it syncs is the daemon's
+    /// ([`crate::daemon::StatusLine`]), whose rate is over the interval.
     progress_from_height: u32,
     progress_since: Instant,
+    /// When the seed names were last looked up, and whether a lookup is in
+    /// flight ([`Node::maybe_reresolve_seeds`]).
+    last_seed_resolve: Instant,
+    resolving_seeds: bool,
     /// The lite-height depth check, fed by every peer's sync data.
     lite_depth: crate::daemon::LiteDepthCheck,
     /// Why the node stopped, when it stopped because it must not run on.
@@ -525,10 +512,9 @@ impl<S: KvStore, P: TxPool> Node<S, P> {
         // A node with exclusive nodes never dials a seed, so it does not look
         // one up either.
         if cfg.exclusive_nodes.is_empty() {
-            pm.set_seeds(resolve_seeds(&cfg));
+            pm.set_seeds(resolve_seeds(&cfg.seeds, cfg.use_default_seeds));
         }
         let anchors = pm.take_anchors();
-        let last_timings = chain.read().unwrap_or_else(|p| p.into_inner()).timings();
         let (events_tx, events_rx) = std::sync::mpsc::sync_channel(net::EVENT_QUEUE);
         let now = Instant::now();
         let exclusive = cfg.exclusive_nodes.iter().map(|n| (n, PinKind::Exclusive));
@@ -555,14 +541,14 @@ impl<S: KvStore, P: TxPool> Node<S, P> {
             synchronized: false,
             sync_claimed: false,
             anchors,
-            last_timings,
             started: false,
             stop: false,
             last_tick: now,
             last_peerlist_store: now,
-            last_progress: now,
             progress_from_height: 0,
             progress_since: now,
+            last_seed_resolve: now,
+            resolving_seeds: false,
             lite_depth: Default::default(),
             fatal: None,
             logging: true,
@@ -1005,6 +991,15 @@ impl<S: KvStore, P: TxPool> Node<S, P> {
         self.cfg.exit_when_synced && self.synchronized
     }
 
+    /// Blocks a second over the whole run, for the line `shutdown` prints.
+    fn progress_rate(&self) -> f64 {
+        let elapsed = self.progress_since.elapsed().as_secs_f64();
+        if elapsed <= 0.0 {
+            return 0.0;
+        }
+        (self.height().saturating_sub(self.progress_from_height)) as f64 / elapsed
+    }
+
     /// Close every connection and write the peer state file, the ban list and
     /// the anchors.
     pub fn shutdown(&mut self) {
@@ -1110,6 +1105,7 @@ impl<S: KvStore, P: TxPool> Node<S, P> {
                 self.on_pinned_dial_failed(addr);
             }
             Event::BackPing { id, ip, port, peer_id, ok } => self.on_back_ping(id, ip, port, peer_id, ok),
+            Event::SeedsResolved { seeds } => self.on_seeds_resolved(seeds),
             Event::Tick => self.maybe_tick(),
         }
     }
@@ -1217,6 +1213,7 @@ impl<S: KvStore, P: TxPool> Node<S, P> {
         self.expire_sync_requests();
         self.serve_deferred_objects();
         self.check_synchronized();
+        self.maybe_reresolve_seeds();
         self.connections_maker();
         if self.last_peerlist_store.elapsed() >= PEERLIST_STORE_INTERVAL {
             self.last_peerlist_store = Instant::now();
@@ -1227,36 +1224,6 @@ impl<S: KvStore, P: TxPool> Node<S, P> {
                 log_warn!("could not write the anchor peers: {e}");
             }
         }
-        if self.last_progress.elapsed() >= PROGRESS_INTERVAL {
-            self.last_progress = Instant::now();
-            self.log_progress();
-        }
-    }
-
-    fn progress_rate(&self) -> f64 {
-        let elapsed = self.progress_since.elapsed().as_secs_f64();
-        if elapsed <= 0.0 {
-            return 0.0;
-        }
-        (self.height().saturating_sub(self.progress_from_height)) as f64 / elapsed
-    }
-
-    /// The progress line, with the per-block cost of each `add_block` phase
-    /// over the interval when blocks were added in it.
-    fn log_progress(&mut self) {
-        let height = self.height();
-        let network = self.observed_height.saturating_add(1).max(height);
-        let syncing = self.peers.values().filter(|p| p.ctx.state == PeerState::Synchronizing).count();
-        let timings = self.chain_read().timings();
-        let phases = phase_line(&self.last_timings, &timings);
-        self.last_timings = timings;
-        log_info!(
-            "height {height}/{network} ({:.1}%) peers {} ({syncing} syncing) {:.1} blocks/s pool {}{phases}",
-            if network == 0 { 100.0 } else { height as f64 * 100.0 / network as f64 },
-            self.peers.len(),
-            self.progress_rate(),
-            self.pool.len()
-        );
     }
 
     /// Close connections that stopped speaking, and inbound ones that never
@@ -1455,6 +1422,79 @@ impl<S: KvStore, P: TxPool> Node<S, P> {
         for addr in self.pm.dial_candidates_for(want, &busy, &outbound) {
             self.connect_to(addr);
         }
+    }
+
+    /// Look the seed names up again when this node is short of outbound peers.
+    ///
+    /// This port used to resolve them once, in the constructor, and never
+    /// again. That is enough for a machine that was already on the network
+    /// when the daemon started and whose seeds never move, and neither is
+    /// safe to assume: `DNS_SEED_NODES` is an A/AAAA record set whose whole
+    /// point is to rotate, so a long-running node ends up dialling addresses
+    /// that are gone; and a node started before its resolver was up (a Pi on
+    /// DHCP, a unit ordered before `network-online.target`) logs "cannot
+    /// resolve seed" once and then has no seed for the life of the process.
+    /// With an empty peer state file that is a node that never joins the
+    /// network at all. The two constants below are the ones the C++
+    /// configuration carries for this (spec/01, "P2P").
+    ///
+    /// Three conditions, so this costs a healthy node nothing:
+    ///
+    /// - not in exclusive mode, where no seed is ever dialled and none was
+    ///   resolved at start-up either;
+    /// - at or below [`P2P_SEED_RETRY_OUT_PEERS_FLOOR`] outbound connections,
+    ///   which is the "the lists are empty or the node is stuck" condition of
+    ///   spec/08 — a node with four outbound peers has the network and does
+    ///   not need a seed;
+    /// - [`P2P_SEED_RERESOLVE_INTERVAL_SECONDS`] since the last lookup, in
+    ///   flight or not, so a resolver that is down is asked once an hour and
+    ///   not once a tick — or [`P2P_SEED_RETRY_INTERVAL_SECONDS`] when no seed
+    ///   address is known at all, which is the state a node that started
+    ///   before its resolver is in, and the one it must leave quickly.
+    ///
+    /// The lookup itself is blocking and can take seconds against a resolver
+    /// that is not answering, so it runs on a thread of its own and comes back
+    /// as [`Event::SeedsResolved`]. The engine thread is the only one that
+    /// applies blocks; nothing that waits on a network round trip may run on
+    /// it.
+    fn maybe_reresolve_seeds(&mut self) {
+        if self.exclusive_mode() || self.resolving_seeds {
+            return;
+        }
+        let outbound = self.peers.values().filter(|p| !p.ctx.incoming).count() + self.dialing.len();
+        if !seed_reresolve_due(self.last_seed_resolve.elapsed(), outbound, !self.pm.seeds().is_empty()) {
+            return;
+        }
+        self.last_seed_resolve = Instant::now();
+        self.resolving_seeds = true;
+        let (extra, use_default) = (self.cfg.seeds.clone(), self.cfg.use_default_seeds);
+        let events = self.events_tx.clone();
+        log_debug!("{outbound} outbound peers: resolving the seed names again");
+        let spawned = std::thread::Builder::new().name("wrkz-seed-resolve".into()).spawn(move || {
+            let seeds = resolve_seeds(&extra, use_default);
+            // The engine may be gone, or its queue full; either way a lost
+            // answer only means the next interval tries again.
+            let _ = events.try_send(Event::SeedsResolved { seeds });
+        });
+        if let Err(e) = spawned {
+            log_warn!("could not start the seed resolver: {e}");
+            self.resolving_seeds = false;
+        }
+    }
+
+    /// A seed lookup came back. An empty answer — every name failed — leaves
+    /// the addresses from last time in place: stale ones are worth more than
+    /// none, and the interval will try again.
+    fn on_seeds_resolved(&mut self, seeds: Vec<SocketAddr>) {
+        self.resolving_seeds = false;
+        if seeds.is_empty() {
+            log_warn!("no seed name resolved; keeping the {} address(es) from before", self.pm.seeds().len());
+            return;
+        }
+        if seeds != self.pm.seeds() {
+            log_info!("seed addresses refreshed: {} known", seeds.len());
+        }
+        self.pm.set_seeds(seeds);
     }
 
     /// `connect_to_peerlist` (`NetNode.cpp:2851-2862`) for one of the two
@@ -2759,17 +2799,38 @@ impl Waker {
     }
 }
 
+/// Whether the seed names are worth looking up again: a node at or below
+/// [`P2P_SEED_RETRY_OUT_PEERS_FLOOR`] outbound connections, no sooner than the
+/// interval for the state it is in.
+///
+/// A node that holds no seed address at all is asked every
+/// [`P2P_SEED_RETRY_INTERVAL_SECONDS`]; one that holds some, every
+/// [`P2P_SEED_RERESOLVE_INTERVAL_SECONDS`]. The first is the node whose
+/// resolver was not up when it started and which has nothing to dial; the
+/// second is only refreshing addresses that still work.
+fn seed_reresolve_due(since_last: Duration, outbound: usize, have_seeds: bool) -> bool {
+    if outbound > P2P_SEED_RETRY_OUT_PEERS_FLOOR {
+        return false;
+    }
+    let interval = if have_seeds { P2P_SEED_RERESOLVE_INTERVAL_SECONDS } else { P2P_SEED_RETRY_INTERVAL_SECONDS };
+    since_last >= Duration::from_secs(interval)
+}
+
 /// The `--seed` list, or the compiled-in seeds and DNS seeds when it is empty.
-fn resolve_seeds(cfg: &NodeConfig) -> Vec<SocketAddr> {
+///
+/// Takes the two fields rather than the whole config because it also runs on a
+/// worker thread ([`Node::maybe_reresolve_seeds`]), which has to own what it
+/// reads.
+fn resolve_seeds(extra: &[String], use_default_seeds: bool) -> Vec<SocketAddr> {
     let mut out = Vec::new();
     let mut push = |target: &str| match peers::resolve(target, P2P_DEFAULT_PORT) {
         Ok(addrs) => out.extend(addrs),
         Err(e) => log_warn!("cannot resolve seed {target}: {e}"),
     };
-    for s in &cfg.seeds {
+    for s in extra {
         push(s);
     }
-    if cfg.use_default_seeds {
+    if use_default_seeds {
         for s in SEED_NODES {
             push(s);
         }
@@ -2787,6 +2848,25 @@ mod tests {
     use super::*;
     use wrkz_chain::TxRule;
 
+    /// A node with the network does not go back to the seeds; one without
+    /// them goes back sooner than one that is merely refreshing.
+    #[test]
+    fn the_seeds_are_looked_up_again_only_by_a_node_that_needs_them() {
+        let hour = Duration::from_secs(P2P_SEED_RERESOLVE_INTERVAL_SECONDS);
+        let five_minutes = Duration::from_secs(P2P_SEED_RETRY_INTERVAL_SECONDS);
+        // Enough outbound peers: never, however long it has been.
+        assert!(!seed_reresolve_due(hour * 10, P2P_SEED_RETRY_OUT_PEERS_FLOOR + 1, true));
+        assert!(!seed_reresolve_due(hour * 10, P2P_SEED_RETRY_OUT_PEERS_FLOOR + 1, false));
+        // Short of peers but with seeds already: the hourly refresh.
+        assert!(!seed_reresolve_due(hour - Duration::from_secs(1), 0, true));
+        assert!(seed_reresolve_due(hour, 0, true));
+        // Short of peers and holding no seed at all: the five-minute retry.
+        assert!(!seed_reresolve_due(five_minutes - Duration::from_secs(1), 0, false));
+        assert!(seed_reresolve_due(five_minutes, 0, false));
+        // The floor itself is included.
+        assert!(seed_reresolve_due(hour, P2P_SEED_RETRY_OUT_PEERS_FLOOR, true));
+    }
+
     /// Transactions go out in messages of at most `TX_BATCH_BYTES` of blobs,
     /// in order, a blob larger than that on its own, nothing lost.
     #[test]
@@ -2799,23 +2879,6 @@ mod tests {
         assert!(tx_batches(&[]).is_empty());
         // and the biggest batch still fits a receiver's relay cap
         assert!((TX_BATCH_BYTES as u64) < wrkz_p2p::limits::RELAY_MAX_PAYLOAD);
-    }
-
-    /// The per-phase costs over the interval, not since the start.
-    #[test]
-    fn the_progress_line_reports_the_interval() {
-        let at = |blocks, us: u64| Timings {
-            blocks,
-            decode: Duration::from_micros(us),
-            validate: Duration::from_micros(10 * us),
-            commit: Duration::from_micros(2 * us),
-            total: Duration::from_micros(13 * us),
-            ..Default::default()
-        };
-        assert_eq!(phase_line(&at(5, 100), &at(5, 100)), "", "no blocks, no line");
-        let line = phase_line(&at(10, 1_000), &at(20, 2_000));
-        assert_eq!(line, " | per block: decode 100us validate 1000us commit 200us total 1300us");
-        assert_eq!(phase_line(&at(20, 2_000), &Timings::default()), "", "a reset is not a negative interval");
     }
 
     /// Proof of work and the rules a sender checks itself are offences; a
