@@ -92,6 +92,14 @@ private_intra_doc_links = "deny"
 [profile.release]
 opt-level = 3
 debug = 1
+# No `lto` here, deliberately. The binaries an operator runs want cross-crate
+# inlining — block validation runs from `wrkz-chain` through `wrkz-pow` into
+# the C of `wrkz-pow-ref` over 32-byte arrays, which is the shape it helps
+# most — but this profile is also what `cargo test --release` builds, and
+# thin LTO re-runs code generation for each of the sixty-odd test binaries.
+# `scripts/release.sh` and the Dockerfile turn it on for the build that
+# actually ships (`CARGO_PROFILE_RELEASE_LTO`), so the test pass does not pay
+# for it. Thin LTO is deterministic, so SHA256SUMS still reproduce.
 
 # Vector tests hash whole blocks with CryptoNight; keep the hashing optimised even in
 # test builds. `"*"` covers dependencies only, so wrkz-pow (the Rust CryptoNight) is

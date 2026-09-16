@@ -24,6 +24,9 @@ WORKDIR /src
 COPY . .
 ARG WRKZ_GIT_COMMIT=""
 ENV WRKZ_GIT_COMMIT=${WRKZ_GIT_COMMIT}
+# Cross-crate inlining for the binaries that ship, as scripts/release.sh does.
+# The root Cargo.toml leaves `lto` off so a test pass does not pay for it.
+ENV CARGO_PROFILE_RELEASE_LTO=thin
 RUN cargo build --release --locked --features rocksdb -p wrkz-node --bin wrkz-node \
  && cargo build --release --locked --features rocksdb -p wrkz-chain --bin wrkz-replay \
  && cargo build --release --locked -p wrkz-wallet --bins \

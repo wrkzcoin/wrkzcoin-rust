@@ -18,7 +18,7 @@
 # the build machine's own. OS names on the command line win over WRKZ_TARGETS.
 # Every target but the host needs scripts/cross-setup.sh once (or the
 # Dockerfile.cross image); scripts/cross.sh builds each one and says with what
-# (docs/CROSS-COMPILE.md).
+# (README.md, "Cross-compiling").
 #
 # Each archive is wrkzcoin-cli-<version>-<commit>-<os>-<arch>, e.g.
 # wrkzcoin-cli-1.0.0-97f3ab1-windows-x86_64.zip: a .zip for Windows, a .tar.gz
@@ -114,10 +114,20 @@ fi
 # data directory and no state, dials any peer, and exits non-zero when the
 # handshake or the block download fails. It is the only thing here that can
 # answer "can this box reach the network at all" before a node exists.
-bins="wrkz-node wrkz-replay wrkz-p2p-probe wrkz-service \
-wrkz-wallet wrkz-wallet-api wrkz-wallet-sync wrkz-wallet-send wrkz-txpow-server"
+# `wrkz-verify-state`, `wrkz-db-inspect` and `wrkz-rpc-diff` ship with them:
+# README.md tells an operator to check a state someone handed over with the
+# first, and an archive that does not carry it makes that impossible to do.
+# None of the three costs anything at run time.
+bins="wrkz-node wrkz-replay wrkz-verify-state wrkz-db-inspect wrkz-p2p-probe \
+wrkz-rpc-diff wrkz-service wrkz-wallet wrkz-wallet-api wrkz-wallet-sync \
+wrkz-wallet-send wrkz-txpow-server"
 
 export WRKZ_GIT_COMMIT="$commit"
+# Cross-crate inlining for the binaries that ship, and only for them: the root
+# Cargo.toml leaves `lto` off so `cargo test --release` does not re-run code
+# generation for every test binary. Thin LTO is deterministic, so two hosts
+# building this commit still produce the same bytes.
+export CARGO_PROFILE_RELEASE_LTO=thin
 export SOURCE_DATE_EPOCH
 SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
 export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$PWD=. --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=~/.cargo"
@@ -127,8 +137,11 @@ find dist -mindepth 1 -maxdepth 1 ! -name "wrkzcoin-cli-$version-$commit-*" -exe
 for target in $targets; do
     echo "== $target =="
     cross_build "$target" --release --locked --features rocksdb -p wrkz-node --bin wrkz-node
-    cross_build "$target" --release --locked --features rocksdb -p wrkz-chain --bin wrkz-replay
+    cross_build "$target" --release --locked --features rocksdb -p wrkz-chain \
+        --bin wrkz-replay --bin wrkz-verify-state
+    cross_build "$target" --release --locked --features rocksdb -p wrkz-storage --bin wrkz-db-inspect
     cross_build "$target" --release --locked -p wrkz-p2p --bin wrkz-p2p-probe
+    cross_build "$target" --release --locked -p wrkz-rpc --bin wrkz-rpc-diff
     cross_build "$target" --release --locked -p wrkz-wallet --bins
     cross_build "$target" --release --locked -p wrkz-service --bin wrkz-service
     cross_build "$target" --release --locked -p wrkz-txpow-server --bin wrkz-txpow-server
