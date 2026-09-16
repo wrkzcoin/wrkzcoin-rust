@@ -7,11 +7,13 @@
 //! prompt.
 //!
 //! The C++ reads those through linenoise, which gives Up and Down through the
-//! lines typed before and editing inside the line. This is that and no more: no
-//! tab completion, no hints, and the history lasts as long as the process.
+//! lines typed before, editing inside the line, and Tab through the commands
+//! that start the way this one does. This is that and no more: no hints, and
+//! the history lasts as long as the process.
 //!
 //! | key | does |
 //! | --- | --- |
+//! | Tab | the next command starting with the word being typed; again for the one after, and once more for what was typed |
 //! | Up, Ctrl-P / Down, Ctrl-N | the previous / next line in the history; Down past the newest is the line being typed again |
 //! | Left, Ctrl-B / Right, Ctrl-F | a character left / right |
 //! | Home, Ctrl-A / End, Ctrl-E | the start / end of the line |
@@ -105,6 +107,10 @@ pub struct Editor {
     /// ended the line before.
     unread: VecDeque<u8>,
     keys: Decoder,
+    /// What Tab completes the first word to, sorted, as
+    /// [`Editor::complete_with`] was given them. Empty means Tab does nothing,
+    /// which is what a prompt that is not a command prompt wants.
+    completions: Vec<String>,
 }
 
 impl Editor {
@@ -121,7 +127,26 @@ impl Editor {
             return None;
         }
         sys::leave_raw();
-        Some(Editor { history: VecDeque::new(), unread: VecDeque::new(), keys: Decoder::default() })
+        Some(Editor {
+            history: VecDeque::new(),
+            unread: VecDeque::new(),
+            keys: Decoder::default(),
+            completions: Vec::new(),
+        })
+    }
+
+    /// Give Tab the words it may complete the **first** word of a line to —
+    /// the command names. Only the first word: everything after it is a hash,
+    /// a height or an address, and a prompt that guessed at those would be
+    /// worse than one that does nothing.
+    ///
+    /// Sorted and deduplicated here, so Tab walks them in a fixed order
+    /// whatever order the caller keeps its table in.
+    pub fn complete_with<I: IntoIterator<Item = S>, S: Into<String>>(&mut self, commands: I) -> &mut Self {
+        self.completions = commands.into_iter().map(Into::into).collect();
+        self.completions.sort();
+        self.completions.dedup();
+        self
     }
 
     /// Read a line at `prompt`, which may be painted with ANSI colour, and add
@@ -131,10 +156,14 @@ impl Editor {
         if !sys::enter_raw() {
             return None;
         }
-        let line = self.edit(&mut std::io::stdin(), &mut |line: &Line| {
+        // Lent to `edit`, which needs `&mut self` for the history, and put
+        // straight back: the table outlives the line being typed.
+        let completions = std::mem::take(&mut self.completions);
+        let line = self.edit(&completions, &mut std::io::stdin(), &mut |line: &Line| {
             let (row, back) = render(prompt, line, sys::terminal_width().unwrap_or(FALLBACK_WIDTH));
             log::draw_prompt_row(&row, back);
         });
+        self.completions = completions;
         match &line {
             Some(text) => log::end_prompt_row(&format!("{prompt}{text}"), prompt),
             None => log::set_prompt(Some(prompt.to_string())),
@@ -145,8 +174,8 @@ impl Editor {
 
     /// The editing, over any input: the keys `input` sends until Enter, with
     /// the line handed to `draw` each time the editor waits for more.
-    fn edit(&mut self, input: &mut impl Read, draw: &mut dyn FnMut(&Line)) -> Option<String> {
-        let mut line = Line::new(&self.history);
+    fn edit(&mut self, completions: &[String], input: &mut impl Read, draw: &mut dyn FnMut(&Line)) -> Option<String> {
+        let mut line = Line::new(&self.history, completions);
         let mut chunk = [0u8; 256];
         loop {
             // All of what one read brought is applied before the row is drawn
@@ -199,8 +228,14 @@ enum Step {
     Ended,
 }
 
-/// The line being typed, and the history it can recall.
-struct Line {
+/// The line being typed, the history it can recall and the commands Tab
+/// completes its first word to.
+struct Line<'a> {
+    completions: &'a [String],
+    /// What Tab is part-way through, while the last key was a Tab: the word
+    /// before it started and which candidate is on the row. Cleared by any
+    /// other key.
+    cycle: Option<Cycle>,
     chars: Vec<char>,
     /// Where the cursor is: 0 before the first character, `chars.len()` after
     /// the last.
@@ -213,11 +248,75 @@ struct Line {
     at: usize,
 }
 
-impl Line {
-    fn new(history: &VecDeque<String>) -> Line {
+/// A Tab cycle in progress.
+struct Cycle {
+    /// The word as it was typed, which one more Tab past the last candidate
+    /// puts back.
+    typed: String,
+    /// The candidates, in order.
+    candidates: Vec<String>,
+    /// Which one is on the row; `candidates.len()` is `typed` itself.
+    at: usize,
+}
+
+impl<'a> Line<'a> {
+    fn new(history: &VecDeque<String>, completions: &'a [String]) -> Line<'a> {
         let mut recall: Vec<String> = history.iter().cloned().collect();
         recall.push(String::new());
-        Line { chars: Vec::new(), cursor: 0, at: recall.len() - 1, recall }
+        Line { completions, cycle: None, chars: Vec::new(), cursor: 0, at: recall.len() - 1, recall }
+    }
+
+    /// Tab: put the next command that starts the way the first word does on
+    /// the row, as linenoise's `completeLine` does — one candidate at a time,
+    /// in order, and the typed word again after the last, so nothing is ever
+    /// lost by pressing Tab once too often.
+    ///
+    /// Only the first word. Everything after a command name here is a hash, a
+    /// height, an address or a log level, and a prompt that guessed at those
+    /// would cost more than it saved.
+    fn complete(&mut self) {
+        // Part-way through a cycle: the next candidate, then the typed word.
+        if let Some(cycle) = &mut self.cycle {
+            cycle.at = if cycle.at >= cycle.candidates.len() { 0 } else { cycle.at + 1 };
+            let word = match cycle.candidates.get(cycle.at) {
+                Some(candidate) => candidate.clone(),
+                None => cycle.typed.clone(),
+            };
+            self.set_first_word(&word);
+            return;
+        }
+        // The word is the first one, and the cursor has to be inside it: a Tab
+        // in the middle of `print_block <hash>` is not asking about the command.
+        let typed: String = self.chars.iter().take_while(|c| **c != ' ').collect();
+        if self.cursor > typed.chars().count() {
+            return;
+        }
+        let candidates: Vec<String> = self.completions.iter().filter(|c| c.starts_with(&typed)).cloned().collect();
+        if candidates.is_empty() {
+            return;
+        }
+        let first = candidates[0].clone();
+        self.cycle = Some(Cycle { typed, candidates, at: 0 });
+        self.set_first_word(&first);
+    }
+
+    /// Replace the first word with `word`, leaving the rest of the line alone
+    /// and the cursor at the end of the new word.
+    fn set_first_word(&mut self, word: &str) {
+        let end = self.chars.iter().position(|c| *c == ' ').unwrap_or(self.chars.len());
+        let rest: Vec<char> = self.chars.split_off(end);
+        self.chars.clear();
+        self.chars.extend(word.chars());
+        self.cursor = self.chars.len();
+        self.chars.extend(rest);
+        // The cap is the cap, whatever Tab was asked for.
+        let mut bytes: usize = self.chars.iter().map(|c| c.len_utf8()).sum();
+        while bytes > MAX_LINE_BYTES {
+            if let Some(c) = self.chars.pop() {
+                bytes -= c.len_utf8();
+            }
+        }
+        self.cursor = self.cursor.min(self.chars.len());
     }
 
     fn text(&self) -> String {
@@ -225,7 +324,13 @@ impl Line {
     }
 
     fn apply(&mut self, key: Key) -> Step {
+        // Any key but Tab ends a cycle, so the next Tab starts from the word
+        // that is on the row now.
+        if key != Key::Tab {
+            self.cycle = None;
+        }
         match key {
+            Key::Tab => self.complete(),
             Key::Enter => return Step::Entered,
             Key::CtrlD if self.chars.is_empty() => return Step::Ended,
             Key::Char(c) => self.insert(c),
@@ -341,6 +446,7 @@ fn columns(text: &str) -> usize {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Key {
     Char(char),
+    Tab,
     Enter,
     Backspace,
     Delete,
@@ -383,6 +489,7 @@ impl Decoder {
     fn start(&mut self, byte: u8, after_cr: bool) -> Option<Key> {
         Some(match byte {
             b'\n' if after_cr => return None,
+            b'\t' => Key::Tab,
             b'\r' | b'\n' => Key::Enter,
             0x7f | 0x08 => Key::Backspace,
             0x01 => Key::Home,
@@ -696,7 +803,13 @@ mod tests {
 
     /// An editor that has had `lines` entered at it, and no terminal.
     fn editor_with(lines: &[&str]) -> Editor {
-        Editor { history: history(lines), unread: VecDeque::new(), keys: Decoder::default() }
+        Editor { history: history(lines), unread: VecDeque::new(), keys: Decoder::default(), completions: Vec::new() }
+    }
+
+    /// The command names the console prompts complete with, in the order Tab
+    /// walks them.
+    fn commands() -> Vec<String> {
+        ["help", "print_bc", "print_block", "print_cn", "status"].iter().map(|c| c.to_string()).collect()
     }
 
     fn press(line: &mut Line, keys: &[Key]) {
@@ -752,7 +865,8 @@ mod tests {
         assert_eq!(keys(b"\x1b[99~a"), [Key::Char('a')], "a key not in the table");
         assert_eq!(keys(b"\x1bxy"), [Key::Char('x'), Key::Char('y')], "Alt-x is x");
         assert_eq!(keys(b"\x1b\x1b[A"), [Key::Up], "a doubled escape");
-        assert_eq!(keys(b"\xc3a\xff\x00\x07\tb"), [Key::Char('a'), Key::Char('b')], "broken UTF-8 and controls");
+        assert_eq!(keys(b"\xc3a\xff\x00\x07b"), [Key::Char('a'), Key::Char('b')], "broken UTF-8 and controls");
+        assert_eq!(keys(b"\ta"), [Key::Tab, Key::Char('a')], "a tab is a key, not a control to drop");
         let long = [b"\x1b[".as_slice(), &[b'1'; 1000], b"~z"].concat();
         let mut decoder = Decoder::default();
         let decoded: Vec<Key> = long.iter().filter_map(|&byte| decoder.push(byte)).collect();
@@ -762,7 +876,7 @@ mod tests {
 
     #[test]
     fn the_editing_keys_act_where_the_cursor_is() {
-        let mut line = Line::new(&VecDeque::new());
+        let mut line = Line::new(&VecDeque::new(), &[]);
         type_text(&mut line, "print_bc 10");
         assert_eq!(shown(&line), "print_bc 10|");
         press(&mut line, &[Key::Left, Key::Left, Key::Backspace]);
@@ -783,7 +897,7 @@ mod tests {
 
     #[test]
     fn ctrl_d_ends_the_input_only_on_an_empty_line() {
-        let mut line = Line::new(&VecDeque::new());
+        let mut line = Line::new(&VecDeque::new(), &[]);
         type_text(&mut line, "ab");
         press(&mut line, &[Key::Home]);
         assert_eq!(line.apply(Key::CtrlD), Step::Editing);
@@ -794,7 +908,7 @@ mod tests {
 
     #[test]
     fn up_goes_back_through_the_history_and_down_returns_to_the_line_being_typed() {
-        let mut line = Line::new(&history(&["status", "print_pl"]));
+        let mut line = Line::new(&history(&["status", "print_pl"]), &[]);
         type_text(&mut line, "hei");
         press(&mut line, &[Key::Up]);
         assert_eq!(shown(&line), "print_pl|", "the newest first, with the cursor at its end");
@@ -811,7 +925,7 @@ mod tests {
         let mut editor = editor_with(&["print_bc 1 10"]);
         // Up, change the last number, go down and up again, and enter it.
         let mut input: &[u8] = b"\x1b[A\x7f\x7f20\x1b[B\x1b[A\r";
-        assert_eq!(editor.edit(&mut input, &mut |_| {}).as_deref(), Some("print_bc 1 20"));
+        assert_eq!(editor.edit(&[], &mut input, &mut |_| {}).as_deref(), Some("print_bc 1 20"));
         assert_eq!(editor.history, ["print_bc 1 10", "print_bc 1 20"]);
     }
 
@@ -821,12 +935,87 @@ mod tests {
         let mut input: &[u8] = b"status\r\n\r\n  \rheight\r\nprint_pl";
         let mut lines = Vec::new();
         let mut draws = 0;
-        while let Some(line) = editor.edit(&mut input, &mut |_| draws += 1) {
+        while let Some(line) = editor.edit(&[], &mut input, &mut |_| draws += 1) {
             lines.push(line);
         }
         assert_eq!(lines, ["status", "", "  ", "height"], "a line with no Enter is dropped at the end of input");
         assert_eq!(editor.history, ["status", "height"], "blank lines are not kept");
         assert_eq!(draws, 2, "before the paste arrived, and after it, not once a character");
+    }
+
+    /// Tab walks the commands that start the way the word does, in order, and
+    /// puts the typed word back after the last one, as linenoise does.
+    #[test]
+    fn tab_cycles_through_the_commands_and_back_to_what_was_typed() {
+        let table = commands();
+        let mut line = Line::new(&VecDeque::new(), &table);
+        type_text(&mut line, "print_");
+        press(&mut line, &[Key::Tab]);
+        assert_eq!(shown(&line), "print_bc|");
+        press(&mut line, &[Key::Tab]);
+        assert_eq!(shown(&line), "print_block|");
+        press(&mut line, &[Key::Tab]);
+        assert_eq!(shown(&line), "print_cn|");
+        press(&mut line, &[Key::Tab]);
+        assert_eq!(shown(&line), "print_|", "past the last candidate, what was typed");
+        press(&mut line, &[Key::Tab]);
+        assert_eq!(shown(&line), "print_bc|", "and round again");
+    }
+
+    #[test]
+    fn tab_completes_one_candidate_and_leaves_the_rest_of_the_line_alone() {
+        let table = commands();
+        // One candidate: straight to it.
+        let mut line = Line::new(&VecDeque::new(), &table);
+        type_text(&mut line, "st");
+        press(&mut line, &[Key::Tab]);
+        assert_eq!(shown(&line), "status|");
+        // An empty line offers everything, starting at the first.
+        let mut line = Line::new(&VecDeque::new(), &table);
+        press(&mut line, &[Key::Tab]);
+        assert_eq!(shown(&line), "help|");
+        // Only the first word is replaced, and the cursor lands at its end.
+        let mut line = Line::new(&VecDeque::new(), &table);
+        type_text(&mut line, "print_bl 42");
+        press(&mut line, &[Key::Home, Key::Right, Key::Right]);
+        press(&mut line, &[Key::Tab]);
+        assert_eq!(shown(&line), "print_block| 42");
+    }
+
+    #[test]
+    fn tab_does_nothing_where_there_is_nothing_to_complete() {
+        let table = commands();
+        // No command starts this way.
+        let mut line = Line::new(&VecDeque::new(), &table);
+        type_text(&mut line, "zzz");
+        press(&mut line, &[Key::Tab]);
+        assert_eq!(shown(&line), "zzz|");
+        // The cursor is past the first word: this is an argument, not a command.
+        let mut line = Line::new(&VecDeque::new(), &table);
+        type_text(&mut line, "print_ 42");
+        press(&mut line, &[Key::Tab]);
+        assert_eq!(shown(&line), "print_ 42|");
+        // A prompt with no table at all — every prompt that is not a command
+        // prompt — is untouched.
+        let mut line = Line::new(&VecDeque::new(), &[]);
+        type_text(&mut line, "st");
+        press(&mut line, &[Key::Tab]);
+        assert_eq!(shown(&line), "st|");
+    }
+
+    /// A key between two Tabs ends the cycle, so the next Tab completes what is
+    /// on the row rather than carrying on from where it was.
+    #[test]
+    fn typing_between_tabs_starts_a_new_cycle() {
+        let table = commands();
+        let mut line = Line::new(&VecDeque::new(), &table);
+        type_text(&mut line, "print_");
+        press(&mut line, &[Key::Tab, Key::Tab]);
+        assert_eq!(shown(&line), "print_block|");
+        press(&mut line, &[Key::Backspace]);
+        assert_eq!(shown(&line), "print_bloc|");
+        press(&mut line, &[Key::Tab]);
+        assert_eq!(shown(&line), "print_block|", "the only candidate for what is there now");
     }
 
     #[test]
@@ -850,7 +1039,7 @@ mod tests {
 
     #[test]
     fn a_line_stops_growing_at_the_cap() {
-        let mut line = Line::new(&VecDeque::new());
+        let mut line = Line::new(&VecDeque::new(), &[]);
         type_text(&mut line, &"a".repeat(MAX_LINE_BYTES + 10));
         assert_eq!(line.chars.len(), MAX_LINE_BYTES);
         press(&mut line, &[Key::Backspace, Key::Char('é')]);
@@ -859,7 +1048,7 @@ mod tests {
 
     #[test]
     fn a_line_wider_than_the_terminal_scrolls_to_keep_the_cursor_on_the_row() {
-        let mut line = Line::new(&VecDeque::new());
+        let mut line = Line::new(&VecDeque::new(), &[]);
         type_text(&mut line, "print_block 4213000");
         assert_eq!(render("> ", &line, 80), ("> print_block 4213000".to_string(), 0));
         // Twelve columns, two of them the prompt's and one kept free: the nine

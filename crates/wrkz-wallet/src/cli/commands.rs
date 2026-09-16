@@ -225,6 +225,11 @@ pub fn parse_command<T: Listable>(
     available: &[T],
     prompt: &str,
 ) -> Selection {
+    // Tab completes to whatever this prompt actually accepts — the startup
+    // menu, the wallet's own commands, a view wallet's shorter list — so the
+    // table is set here rather than once at the top and left to drift.
+    let names: Vec<&str> = available.iter().map(|c| c.command_name()).collect();
+    term.set_commands(&names);
     loop {
         term.write(&information(prompt));
         term.flush();

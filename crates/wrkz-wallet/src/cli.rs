@@ -88,10 +88,6 @@
 //!
 //! # What is not here
 //!
-//! - **Tab completion.** `linenoise` supplies it in the C++
-//!   (`GetInput.cpp:65`), with the command history. The history and in-line
-//!   editing are here ([`term::Terminal::read_command`]); completing a
-//!   command name is not.
 //! - **Colour on a Windows console below the ANSI-capable builds.** ANSI is
 //!   emitted directly rather than translated; [`term::set_colour`] turns it off.
 
@@ -138,6 +134,9 @@ pub struct ZedConfig {
     /// `--scan-coinbase-transactions` was given; that flag is still accepted
     /// and changes nothing.
     pub skip_coinbase_transactions: bool,
+    /// `--sync-windows`: the height-window download far below the tip
+    /// ([`crate::sync::SyncConfig::height_windows`]).
+    pub sync_windows: bool,
 }
 
 impl Default for ZedConfig {
@@ -154,6 +153,7 @@ impl Default for ZedConfig {
             log_file: None,
             threads: crate::sync::SyncConfig::default().scan_threads as u32,
             skip_coinbase_transactions: false,
+            sync_windows: false,
         }
     }
 }

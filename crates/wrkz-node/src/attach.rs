@@ -240,7 +240,12 @@ fn run_on_socket(path: &str) -> u8 {
     let describe = wrkz_rpc::ipc::describe(path);
     let mut stdout = std::io::stdout();
     match Editor::new() {
-        Some(mut editor) => session(&mut transport, &describe, &mut editor, &mut stdout),
+        Some(mut editor) => {
+            // The same table the daemon's own prompt completes with: this is
+            // that console, over a socket.
+            editor.complete_with(crate::console::COMMANDS.iter().map(|(name, _)| *name));
+            session(&mut transport, &describe, &mut editor, &mut stdout)
+        }
         None => {
             let mut lines = Plain { reader: std::io::stdin().lock(), prompt: crate::log::terminal().stdin };
             session(&mut transport, &describe, &mut lines, &mut stdout)

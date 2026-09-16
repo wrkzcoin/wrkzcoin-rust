@@ -6,8 +6,8 @@
 //!
 //! An operator types `status` at the running daemon and gets the same table the
 //! C++ `Wrkzd` prints. This module is the command set, the dispatcher and the
-//! stdin reader; `src/bin/node.rs` wires it up and `docs/DAEMON.md` documents
-//! it.
+//! stdin reader; `src/bin/node.rs` wires it up, and `help` at the prompt
+//! lists every command with its usage.
 //!
 //! # Where the numbers come from
 //!
@@ -69,14 +69,15 @@
 //! | `status` prints `DB Engine: RocksDB` | whichever engine this build opened |
 //! | `snapshot_export` | the same, over [`crate::snapshot::Exporter`]; a console built without one says so |
 //! | `compact_db wait` waits holding the compaction lock | it does not; see [`crate::compaction`] |
-//! | linenoise: history and line editing | the same, through [`wrkz_rpc::readline`]; and `log_tail`, which the C++ has not; see below |
+//! | linenoise: history, line editing and Tab completion | the same, through [`wrkz_rpc::readline`], over [`COMMANDS`]; and `log_tail`, which the C++ has not; see below |
 //!
 //! # Line editing, and `log_tail`
 //!
 //! On a terminal the prompt reads through [`wrkz_rpc::readline`]: Up and Down
 //! go back through the last hundred commands, the line can be edited where the
 //! cursor is, and a log line arriving mid-edit takes the half-typed line off the
-//! screen and puts it back, cursor and all. The history lasts until the daemon
+//! screen and puts it back, cursor and all. Tab walks the commands that start
+//! the way the word being typed does. The history lasts until the daemon
 //! stops. Where the terminal cannot take that — `TERM=dumb`, a Windows console
 //! too old for virtual-terminal input — the line is read in the terminal's own
 //! line mode instead: backspace works, the arrow keys and the history do not.
@@ -1205,6 +1206,9 @@ fn read_loop(console: &Console) {
     log::set_prompt(Some(PROMPT.to_string()));
     log::console_print(&format!("{}\nType `help` for the command list.", console.cfg.version));
     let mut editor = Editor::new();
+    if let Some(editor) = editor.as_mut() {
+        editor.complete_with(COMMANDS.iter().map(|(name, _)| *name));
+    }
     let stdin = std::io::stdin();
     let mut buffer: Vec<u8> = Vec::new();
     loop {

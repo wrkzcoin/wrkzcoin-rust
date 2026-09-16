@@ -87,6 +87,12 @@ pub trait Terminal {
         self.read_line()
     }
 
+    /// The command names Tab may complete the next [`Terminal::read_command`]
+    /// to. A terminal without the line editor ignores them, which is why this
+    /// has a default: a scripted test drives the same code with no terminal
+    /// at all.
+    fn set_commands(&mut self, _names: &[&str]) {}
+
     /// One line with the echo suppressed. The result is zeroized on drop and
     /// is never written back to the terminal or to a log.
     fn read_password(&mut self) -> Option<Zeroizing<String>>;
@@ -184,6 +190,12 @@ impl Terminal for StdTerminal {
         match read {
             Ok(0) | Err(_) => None,
             Ok(_) => Some(trim_newline(line)),
+        }
+    }
+
+    fn set_commands(&mut self, names: &[&str]) {
+        if let Some(editor) = self.commands.as_mut() {
+            editor.complete_with(names.iter().copied());
         }
     }
 
