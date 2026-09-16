@@ -4,9 +4,13 @@
 #
 #     cargo install cargo-deny --locked
 #     cargo deny --workspace --all-features check
+#     cargo deny --manifest-path apps/pluton/Cargo.toml --config deny.toml --all-features check
 #
 # `--all-features` matters: the RocksDB engine and both zstd paths are optional
-# and would otherwise never be looked at.
+# and would otherwise never be looked at. The second line matters for the same
+# reason: Rust Pluton Wallet is its own workspace (it pulls in a GUI toolkit),
+# so `--workspace` does not reach it, and its tree — Slint, a font stack, a
+# pile of image decoders — is the one an end user actually runs.
 #
 # The allow list below was written from this tree's own lock file, so a new
 # entry means a dependency introduced a licence nothing here had before. That

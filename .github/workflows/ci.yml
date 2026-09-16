@@ -10,7 +10,9 @@
 name: ci
 on:
   push:
-    branches: [dev, main]
+    # The branches this repository actually has. `development` is where work
+    # lands; naming one that does not exist means no push is ever built.
+    branches: [development, main]
   pull_request:
 # No job writes to the repository; the token only needs to read it.
 permissions:
@@ -109,7 +111,7 @@ jobs:
     # running, scripts/fuzz.sh — but it catches a target that rotted and a
     # crash reachable in the first few thousand inputs.
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5
       - name: toolchain
@@ -145,6 +147,13 @@ jobs:
         run: |
           . "$HOME/.cargo/env"
           cargo deny --workspace --all-features check
+      # Rust Pluton Wallet is its own workspace, so `--workspace` above never
+      # reaches it: a GUI toolkit, a font stack and a pile of image decoders
+      # that nothing here was auditing. It uses the same deny.toml.
+      - name: deny (rust pluton wallet)
+        run: |
+          . "$HOME/.cargo/env"
+          cargo deny --manifest-path apps/pluton/Cargo.toml --config deny.toml --all-features check
   cross:
     # The Unix-only and platform-only code the jobs above never compile:
     # macOS (both architectures), arm64 Linux and Windows, built from this

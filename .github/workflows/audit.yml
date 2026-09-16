@@ -27,3 +27,4 @@ jobs:
         run: |
           . "$HOME/.cargo/env"
           cargo deny --workspace --all-features check
+          cargo deny --manifest-path apps/pluton/Cargo.toml --config deny.toml --all-features check
