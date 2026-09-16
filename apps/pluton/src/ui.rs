@@ -25,6 +25,7 @@ where
     let browser = cfg!(target_family = "wasm");
     let state = ui.global::<State>();
     state.set_version(format!("Rust Pluton Wallet {}", env!("CARGO_PKG_VERSION")).into());
+    // A placeholder until `Event::Settings` arrives with what is in force.
     state.set_node_url(if browser { DEFAULT_NODE_BROWSER.into() } else { DEFAULT_NODE.into() });
     state.set_suggested_pow_url(SUGGESTED_POW_SERVER.into());
 
@@ -110,6 +111,9 @@ fn bind(ui: &AppWindow, wallet: &Rc<dyn WalletHandle>) {
     actions.on_set_node(move |url| w.send(Command::SetNode { url: url.into() }));
 
     let w = send(wallet);
+    actions.on_set_fast_sync(move |skip_coinbase| w.send(Command::SetFastSync { skip_coinbase }));
+
+    let w = send(wallet);
     actions.on_set_pow_server(move |url, key| w.send(Command::SetPowServer { url: url.into(), api_key: key.into() }));
 
     let w = send(wallet);
@@ -165,6 +169,14 @@ fn apply(ui: &AppWindow, event: Event) {
             // until it is dismissed.
             state.set_new_seed(seed.unwrap_or_default().into());
         }
+        Event::Settings { node_url, pow_server_url, pow_api_key, skip_coinbase } => {
+            // What is actually in force, which is not this platform's default
+            // once anyone has changed it.
+            state.set_node_url(node_url.into());
+            state.set_pow_url(pow_server_url.into());
+            state.set_pow_key(pow_api_key.into());
+            state.set_skip_coinbase(skip_coinbase);
+        }
         Event::Closed => {
             state.set_wallet_open(false);
             state.set_page("wallets".into());
@@ -174,16 +186,7 @@ fn apply(ui: &AppWindow, event: Event) {
         Event::Progress { progress } => {
             state.set_sync_percent(progress.percent());
             state.set_synced(progress.synced);
-            state.set_sync_text(
-                if progress.synced {
-                    "Synced".to_string()
-                } else if progress.network_height == 0 {
-                    "Connecting…".to_string()
-                } else {
-                    format!("Block {} of {}", progress.wallet_height, progress.network_height)
-                }
-                .into(),
-            );
+            state.set_sync_text(progress.describe().into());
         }
         Event::Balance { unlocked, locked } => {
             state.set_unlocked(format_amount(unlocked).into());

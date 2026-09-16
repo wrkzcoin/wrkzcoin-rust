@@ -113,6 +113,8 @@ pub enum Command {
     Save,
     /// Point the wallet at another daemon.
     SetNode { url: String },
+    /// Turn the faster first sync on or off (`skipCoinbaseTransactions`).
+    SetFastSync { skip_coinbase: bool },
     /// Use a proof-of-work server, or nobody (an empty `url`).
     SetPowServer { url: String, api_key: String },
     /// Try a proof-of-work server without saving it.
@@ -143,6 +145,14 @@ pub struct SyncProgress {
     pub local_height: u64,
     pub network_height: u64,
     pub synced: bool,
+    /// Blocks a second, smoothed over the last rounds; `0.0` until enough
+    /// time has passed to measure one.
+    #[serde(default)]
+    pub blocks_per_second: f32,
+    /// Seconds of scanning left at that rate, or `0` when there is no
+    /// estimate worth showing — synced, stalled, or not measured yet.
+    #[serde(default)]
+    pub eta_seconds: u64,
 }
 
 impl SyncProgress {
@@ -152,6 +162,41 @@ impl SyncProgress {
             return 100.0;
         }
         (self.wallet_height as f64 / self.network_height as f64 * 100.0).clamp(0.0, 100.0) as f32
+    }
+
+    /// The line under the progress bar. A first sync of this chain is hours of
+    /// work; a percentage alone does not tell anyone whether it is moving, and
+    /// "is it stuck?" is the question a wallet has to answer without being
+    /// asked.
+    pub fn describe(&self) -> String {
+        if self.synced {
+            return "Synced".to_string();
+        }
+        if self.network_height == 0 {
+            return "Connecting…".to_string();
+        }
+        let mut line = format!("Block {} of {}", self.wallet_height, self.network_height);
+        if self.blocks_per_second >= 0.05 {
+            line.push_str(&format!(" · {:.0} blocks/s", self.blocks_per_second));
+        }
+        if self.eta_seconds > 0 {
+            line.push_str(&format!(" · about {} left", format_duration(self.eta_seconds)));
+        }
+        line
+    }
+}
+
+/// A duration for a human: the two largest units and no more.
+pub fn format_duration(seconds: u64) -> String {
+    let (days, hours, minutes, secs) = (seconds / 86_400, seconds / 3600 % 24, seconds / 60 % 60, seconds % 60);
+    if days > 0 {
+        format!("{days}d {hours}h")
+    } else if hours > 0 {
+        format!("{hours}h {minutes:02}m")
+    } else if minutes > 0 {
+        format!("{minutes}m {secs:02}s")
+    } else {
+        format!("{secs}s")
     }
 }
 
@@ -253,6 +298,14 @@ pub enum Event {
         name: String,
         bytes: Vec<u8>,
     },
+    /// What Settings remembers, sent when the wallet starts so the screen
+    /// shows what is actually in force rather than this platform's defaults.
+    Settings {
+        node_url: String,
+        pow_server_url: String,
+        pow_api_key: String,
+        skip_coinbase: bool,
+    },
     /// The wallet has stopped and the window may close.
     Stopped,
 }
@@ -300,6 +353,27 @@ mod tests {
         assert_eq!(SyncProgress::default().percent(), 100.0, "nothing known yet");
     }
 
+    /// The line under the bar says whether it is moving and how long is left,
+    /// and says neither when it does not know.
+    #[test]
+    fn progress_describes_itself() {
+        assert_eq!(SyncProgress { synced: true, ..SyncProgress::default() }.describe(), "Synced");
+        assert_eq!(SyncProgress::default().describe(), "Connecting…");
+        let slow = SyncProgress { wallet_height: 50, network_height: 100, ..SyncProgress::default() };
+        assert_eq!(slow.describe(), "Block 50 of 100", "no rate measured yet, so no rate and no estimate");
+        let moving = SyncProgress { blocks_per_second: 25.0, eta_seconds: 3661, ..slow };
+        assert_eq!(moving.describe(), "Block 50 of 100 · 25 blocks/s · about 1h 01m left");
+    }
+
+    #[test]
+    fn a_duration_shows_its_two_largest_units() {
+        assert_eq!(format_duration(0), "0s");
+        assert_eq!(format_duration(59), "59s");
+        assert_eq!(format_duration(61), "1m 01s");
+        assert_eq!(format_duration(3 * 3600 + 5 * 60 + 7), "3h 05m");
+        assert_eq!(format_duration(2 * 86_400 + 7 * 3600 + 1), "2d 7h");
+    }
+
     /// The browser carries these as JSON; every variant must survive the trip.
     #[test]
     fn commands_and_events_round_trip_as_json() {
@@ -317,5 +391,23 @@ mod tests {
         let text = serde_json::to_string(&event).unwrap();
         assert!(text.contains("\"event\":\"balance\""), "{text}");
         assert!(matches!(serde_json::from_str::<Event>(&text).unwrap(), Event::Balance { unlocked: 1, locked: 2 }));
+
+        let event = Event::Settings {
+            node_url: "http://127.0.0.1:17856".into(),
+            pow_server_url: String::new(),
+            pow_api_key: String::new(),
+            skip_coinbase: true,
+        };
+        let text = serde_json::to_string(&event).unwrap();
+        // Variant fields keep their Rust spelling: `rename_all` on this enum
+        // renames the variants, not their fields, and the browser bridge
+        // passes the object through without reading either.
+        assert!(text.contains("\"skip_coinbase\":true"), "{text}");
+        assert!(matches!(serde_json::from_str::<Event>(&text).unwrap(), Event::Settings { skip_coinbase: true, .. }));
+
+        let command = Command::SetFastSync { skip_coinbase: true };
+        let text = serde_json::to_string(&command).unwrap();
+        assert!(text.contains("\"command\":\"setFastSync\""), "{text}");
+        assert!(matches!(serde_json::from_str::<Command>(&text).unwrap(), Command::SetFastSync { .. }));
     }
 }

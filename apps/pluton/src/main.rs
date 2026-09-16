@@ -6,6 +6,7 @@
 
 // No console window behind the wallet on Windows.
 #![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
+#![forbid(unsafe_code)]
 
 #[cfg(not(any(target_os = "android", target_family = "wasm")))]
 fn main() -> Result<(), slint::PlatformError> {

@@ -10,6 +10,12 @@
 //! blocking request is allowed. The user interface talks to it in messages, so
 //! syncing and a proof-of-work search never freeze the window.
 
+// `deny` and not `forbid`: this crate writes no `unsafe`, but
+// `slint::include_modules!` below expands to generated code that allows it for
+// the toolkit's own vtables, and `forbid` cannot be lifted by an inner
+// `allow`. Anything hand-written here is still an error.
+#![deny(unsafe_code)]
+
 pub mod protocol;
 pub mod service;
 

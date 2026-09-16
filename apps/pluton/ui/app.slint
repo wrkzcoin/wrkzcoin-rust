@@ -73,6 +73,10 @@ export global State {
 
     // Settings.
     in-out property <string> node-url: "";
+    // Skip coinbase transactions: a much shorter first sync for a wallet that
+    // is not paid mining rewards, because the daemon may then skip empty
+    // blocks outright.
+    in-out property <bool> skip-coinbase: false;
     in-out property <string> pow-url: "";
     in-out property <string> pow-key: "";
     in-out property <string> pow-result: "";
@@ -102,6 +106,7 @@ export global Actions {
     callback cancel-send();
     callback optimize();
     callback set-node(string);
+    callback set-fast-sync(bool);
     callback set-pow-server(string, string);
     callback test-pow-server(string, string);
     callback reveal-secrets(string);
@@ -770,6 +775,31 @@ component SettingsPage inherits ScrollView {
                 padding: 16px;
                 spacing: 8px;
                 Label {
+                    text: "SYNCING";
+                }
+
+                CheckBox {
+                    text: "Faster first sync (skip mining rewards)";
+                    checked: State.skip-coinbase;
+                    toggled => {
+                        Actions.set-fast-sync(self.checked);
+                    }
+                }
+
+                Text {
+                    text: "Most blocks on this chain carry nothing but a mining reward. Skipping them lets the node send whole ranges at a time, which is much faster. Leave this off if you mine to this wallet: those rewards would not be seen.";
+                    color: Theme.dim;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+            }
+        }
+
+        Card {
+            VerticalBox {
+                padding: 16px;
+                spacing: 8px;
+                Label {
                     text: "TRANSACTION PROOF-OF-WORK SERVER";
                 }
 
@@ -838,13 +868,17 @@ component SettingsPage inherits ScrollView {
                     }
                 }
 
+                // A secret has to be copied exactly or the wallet behind it is
+                // gone, and selecting sixty-four characters of monospace by
+                // hand is how a character goes missing. Each one gets a button
+                // that selects the whole of it, ready for the copy key.
                 if State.secrets-visible: VerticalLayout {
                     spacing: 6px;
                     Label {
                         text: "SEED";
                     }
 
-                    TextInput {
+                    seed-box := TextInput {
                         text: State.secret-seed;
                         read-only: true;
                         wrap: word-wrap;
@@ -852,11 +886,18 @@ component SettingsPage inherits ScrollView {
                         font-size: 12px;
                     }
 
+                    Button {
+                        text: "Select all";
+                        clicked => {
+                            seed-box.select-all();
+                        }
+                    }
+
                     Label {
                         text: "PRIVATE SPEND KEY";
                     }
 
-                    TextInput {
+                    spend-box := TextInput {
                         text: State.secret-spend;
                         read-only: true;
                         wrap: char-wrap;
@@ -864,16 +905,30 @@ component SettingsPage inherits ScrollView {
                         font-size: 12px;
                     }
 
+                    Button {
+                        text: "Select all";
+                        clicked => {
+                            spend-box.select-all();
+                        }
+                    }
+
                     Label {
                         text: "PRIVATE VIEW KEY";
                     }
 
-                    TextInput {
+                    view-box := TextInput {
                         text: State.secret-view;
                         read-only: true;
                         wrap: char-wrap;
                         color: Theme.text;
                         font-size: 12px;
+                    }
+
+                    Button {
+                        text: "Select all";
+                        clicked => {
+                            view-box.select-all();
+                        }
                     }
                 }
 
@@ -1161,12 +1216,19 @@ export component AppWindow inherits Window {
                             wrap: word-wrap;
                         }
 
-                        TextInput {
+                        new-seed-box := TextInput {
                             text: State.new-seed;
                             read-only: true;
                             wrap: word-wrap;
                             color: Theme.text;
                             font-size: 13px;
+                        }
+
+                        Button {
+                            text: "Select all";
+                            clicked => {
+                                new-seed-box.select-all();
+                            }
                         }
 
                         PrimaryButton {

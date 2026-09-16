@@ -40,6 +40,10 @@ const INFO_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Between polls once the wallet is synced.
 const SYNCED_INTERVAL: Duration = Duration::from_secs(10);
+/// How far apart the scanning-rate samples are taken. Short enough that the
+/// figure reacts to a node that stopped answering, long enough that it is not
+/// measuring one download burst.
+const RATE_SAMPLE_INTERVAL: Duration = Duration::from_secs(3);
 
 /// Where wallet files and the settings live: a directory on a desktop or a
 /// phone, the browser's own storage on the web.
@@ -61,6 +65,13 @@ pub struct Settings {
     pub pow_api_key: String,
     /// Offered first the next time the wallet starts.
     pub last_wallet: String,
+    /// Do not scan coinbase transactions. A wallet that is not paid mining
+    /// rewards sees the same transactions either way, and the daemon may then
+    /// skip whole empty blocks — which is most of this chain — so a first sync
+    /// costs a fraction of the round trips. Off by default: a miner's wallet
+    /// with this on would never see a block reward arrive.
+    #[serde(default)]
+    pub skip_coinbase: bool,
 }
 
 impl Settings {
@@ -71,6 +82,7 @@ impl Settings {
             pow_server_url: String::new(),
             pow_api_key: String::new(),
             last_wallet: String::new(),
+            skip_coinbase: false,
         }
     }
 }
@@ -100,6 +112,11 @@ pub struct Service<T: HttpTransport + Clone, S: Storage> {
     prepared: Option<PreparedTransaction>,
     last_save_ms: u64,
     last_info_ms: u64,
+    /// The last (millisecond, wallet height) pair the rate was measured from,
+    /// and the smoothed rate itself. `platform::now_millis` rather than
+    /// `Instant`, which the browser build does not have.
+    rate_sample: Option<(u64, u64)>,
+    blocks_per_second: f32,
 }
 
 impl<T: HttpTransport + Clone, S: Storage> Service<T, S> {
@@ -120,6 +137,8 @@ impl<T: HttpTransport + Clone, S: Storage> Service<T, S> {
             prepared: None,
             last_save_ms: 0,
             last_info_ms: 0,
+            rate_sample: None,
+            blocks_per_second: 0.0,
         }
     }
 
@@ -152,7 +171,7 @@ impl<T: HttpTransport + Clone, S: Storage> Service<T, S> {
     /// Answer one command.
     pub fn handle(&mut self, command: Command) -> Vec<Event> {
         match command {
-            Command::List => vec![Event::Wallets { names: self.storage.list() }],
+            Command::List => vec![self.settings_event(), Event::Wallets { names: self.storage.list() }],
             Command::Create { name, password, wallet } => self.create(&name, &password, wallet),
             Command::Open { name, password, bytes } => self.open(&name, &password, bytes),
             Command::Close => self.close(),
@@ -161,6 +180,7 @@ impl<T: HttpTransport + Clone, S: Storage> Service<T, S> {
                 Err(e) => vec![error(e)],
             },
             Command::SetNode { url } => self.set_node(&url),
+            Command::SetFastSync { skip_coinbase } => self.set_fast_sync(skip_coinbase),
             Command::SetPowServer { url, api_key } => self.set_pow_server(&url, &api_key),
             Command::TestPowServer { url, api_key } => vec![self.test_pow_server(&url, &api_key)],
             Command::PrepareSend { address, amount, payment_id, send_all } => {
@@ -220,6 +240,7 @@ impl<T: HttpTransport + Clone, S: Storage> Service<T, S> {
             }
         };
 
+        self.sample_rate(now);
         events.push(self.progress_event());
         if changed {
             events.push(self.balance_event());
@@ -240,16 +261,56 @@ impl<T: HttpTransport + Clone, S: Storage> Service<T, S> {
             && now.saturating_sub(self.last_save_ms) >= SAVE_INTERVAL.as_millis() as u64
     }
 
+    /// How fast the wallet is scanning, smoothed, sampled no more often than
+    /// [`RATE_SAMPLE_INTERVAL`].
+    ///
+    /// The wallet applies blocks in bursts — a chunk is downloaded, then
+    /// scanned — so the instantaneous rate swings between zero and thousands.
+    /// An exponential average over a few-second window is what a person can
+    /// read, and it is the number the estimate is divided into.
+    fn sample_rate(&mut self, now: u64) {
+        let Some(open) = self.open.as_ref() else {
+            self.rate_sample = None;
+            self.blocks_per_second = 0.0;
+            return;
+        };
+        let height = open.sync.sync_status().wallet_block_count;
+        let Some((then, from)) = self.rate_sample else {
+            self.rate_sample = Some((now, height));
+            return;
+        };
+        let elapsed_ms = now.saturating_sub(then);
+        if elapsed_ms < RATE_SAMPLE_INTERVAL.as_millis() as u64 {
+            return;
+        }
+        let sample = height.saturating_sub(from) as f32 * 1000.0 / elapsed_ms as f32;
+        self.blocks_per_second =
+            if self.blocks_per_second == 0.0 { sample } else { self.blocks_per_second * 0.7 + sample * 0.3 };
+        self.rate_sample = Some((now, height));
+    }
+
     fn progress_event(&self) -> Event {
         let progress = match self.open.as_ref() {
             None => SyncProgress::default(),
             Some(open) => {
                 let status = open.sync.sync_status();
+                let (wallet, network) = (status.wallet_block_count, status.network_block_count);
+                let synced = status.is_synced();
+                // Only a wallet that is behind and actually moving has an
+                // estimate worth printing; one that has stalled would otherwise
+                // show a number that only grows.
+                let eta_seconds = if synced || self.blocks_per_second < 0.05 || network <= wallet {
+                    0
+                } else {
+                    ((network - wallet) as f32 / self.blocks_per_second) as u64
+                };
                 SyncProgress {
-                    wallet_height: status.wallet_block_count,
+                    wallet_height: wallet,
                     local_height: status.local_daemon_block_count,
-                    network_height: status.network_block_count,
-                    synced: status.is_synced(),
+                    network_height: network,
+                    synced,
+                    blocks_per_second: self.blocks_per_second,
+                    eta_seconds,
                 }
             }
         };
@@ -377,11 +438,13 @@ impl<T: HttpTransport + Clone, S: Storage> Service<T, S> {
     /// first progress, balance and history.
     fn start(&mut self, name: &str, password: &str, wallet: Wallet) -> Result<Vec<Event>, String> {
         let daemon = self.daemon()?;
-        let mut sync = Synchronizer::with_config(daemon, wallet, SyncConfig::default());
+        let mut sync = Synchronizer::with_config(daemon, wallet, self.sync_config());
         let _ = sync.refresh_info();
         self.open = Some(Open { name: name.to_string(), password: password.to_string(), sync, dirty: true });
         self.last_info_ms = platform::now_millis();
         self.last_save_ms = 0;
+        self.rate_sample = None;
+        self.blocks_per_second = 0.0;
         self.settings.last_wallet = name.to_string();
         self.save_settings();
 
@@ -416,6 +479,51 @@ impl<T: HttpTransport + Clone, S: Storage> Service<T, S> {
         Ok(if self.browser { vec![Event::Persist { name, bytes }] } else { Vec::new() })
     }
 
+    /// The synchronizer settings in force: the C++ defaults with the one
+    /// choice this wallet offers.
+    fn sync_config(&self) -> SyncConfig {
+        SyncConfig { skip_coinbase_transactions: self.settings.skip_coinbase, ..SyncConfig::default() }
+    }
+
+    fn settings_event(&self) -> Event {
+        Event::Settings {
+            node_url: self.settings.node_url.clone(),
+            pow_server_url: self.settings.pow_server_url.clone(),
+            pow_api_key: self.settings.pow_api_key.clone(),
+            skip_coinbase: self.settings.skip_coinbase,
+        }
+    }
+
+    /// Turn coinbase scanning off or on. It changes what the wallet asks the
+    /// daemon for, so the open synchronizer is rebuilt; nothing already
+    /// scanned is thrown away, and turning it back on does not rescan by
+    /// itself — `rescan` does that.
+    fn set_fast_sync(&mut self, skip_coinbase: bool) -> Vec<Event> {
+        if self.settings.skip_coinbase == skip_coinbase {
+            return vec![self.settings_event()];
+        }
+        self.settings.skip_coinbase = skip_coinbase;
+        self.save_settings();
+        if let Some(open) = self.open.take() {
+            let Open { name, password, sync, dirty } = open;
+            let wallet = sync.into_wallet();
+            match self.daemon() {
+                Ok(daemon) => {
+                    let mut sync = Synchronizer::with_config(daemon, wallet, self.sync_config());
+                    let _ = sync.refresh_info();
+                    self.open = Some(Open { name, password, sync, dirty });
+                }
+                Err(e) => return vec![error(e)],
+            }
+        }
+        let message = if skip_coinbase {
+            "Faster sync is on. Mining rewards paid straight to this wallet will not be seen; turn it off and              rescan if you mine."
+        } else {
+            "Faster sync is off. Every block is scanned, mining rewards included."
+        };
+        vec![self.settings_event(), notice(message, NoticeKind::Info)]
+    }
+
     fn set_node(&mut self, url: &str) -> Vec<Event> {
         let url = url.trim();
         if wrkz_wallet::http::normalize_url(url).is_none() {
@@ -430,7 +538,7 @@ impl<T: HttpTransport + Clone, S: Storage> Service<T, S> {
             let wallet = sync.into_wallet();
             match self.daemon() {
                 Ok(daemon) => {
-                    let mut sync = Synchronizer::with_config(daemon, wallet, SyncConfig::default());
+                    let mut sync = Synchronizer::with_config(daemon, wallet, self.sync_config());
                     let _ = sync.refresh_info();
                     self.open = Some(Open { name, password, sync, dirty });
                 }
@@ -633,7 +741,7 @@ impl<T: HttpTransport + Clone, S: Storage> Service<T, S> {
         match self.daemon() {
             Err(e) => vec![error(e)],
             Ok(daemon) => {
-                let mut sync = Synchronizer::with_config(daemon, wallet, SyncConfig::default());
+                let mut sync = Synchronizer::with_config(daemon, wallet, self.sync_config());
                 let _ = sync.refresh_info();
                 self.open = Some(Open { name, password, sync, dirty: true });
                 let mut events =
