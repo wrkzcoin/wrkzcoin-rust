@@ -1,0 +1,174 @@
+site_name: WrkzCoin (Rust) Documentation
+# Overridable so an archived build can declare its own canonical URL:
+# DOCS_SITE_URL=https://docs-rust.wrkz.work/v1.0.1/ mkdocs build
+site_url: !ENV [DOCS_SITE_URL, "https://docs-rust.wrkz.work/"]
+site_description: Operator guides, wallets, RPC and the protocol specification for the Rust WrkzCoin node
+site_author: The WrkzCoin Developers
+copyright: Copyright &copy; 2018-2026 The WrkzCoin Developers
+
+repo_url: https://github.com/wrkzcoin/wrkzcoin-rust
+repo_name: wrkzcoin/wrkzcoin-rust
+edit_uri: edit/development/site-docs/docs/
+
+docs_dir: docs
+
+theme:
+  name: material
+  # The site-wide "not ready for production" bar.
+  custom_dir: overrides
+  features:
+    - navigation.instant
+    - navigation.top
+    - navigation.sections
+    - navigation.indexes
+    - toc.follow
+    - content.code.copy
+    - content.action.edit
+    - search.highlight
+    - search.suggest
+  # Deep orange rather than the C++ site's indigo, so a reader with both open
+  # can tell at a glance which implementation a page describes.
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep orange
+      accent: deep orange
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep orange
+      accent: deep orange
+      toggle:
+        icon: material/weather-night
+        name: Switch to light mode
+
+plugins:
+  - search
+  - minify:
+      minify_html: true
+
+hooks:
+  # Puts spec/, spec/vectors/README.md and fuzz/README.md into the site, so the
+  # repository keeps one copy of each. Must run before llms_txt.
+  - hooks/stage_sources.py
+  # Emits llms.txt, llms-full.txt and a raw .md mirror of every page into the
+  # built site, so an AI agent can read the docs without scraping HTML.
+  - hooks/llms_txt.py
+  # Links every citation of the C++ code (`Core.cpp:1586`) to that line of
+  # wrkzcoin/wrkzcoin at the commit spec/ is pinned to.
+  - hooks/cpp_links.py
+
+# `mkdocs build --strict` turns every warning into a failure; these make a
+# broken link or a missing anchor a warning in the first place.
+validation:
+  omitted_files: warn
+  absolute_links: info
+  unrecognized_links: warn
+  anchors: warn
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+extra:
+  # Reads /versions.json at the domain root, which scripts/docs/publish.sh
+  # rebuilds from the archived versions actually on the server. The live docs
+  # are served from the root itself, which has no path segment for the
+  # selector to match against, so Material falls back to the FIRST entry in
+  # that file - publish.sh keeps the newest release first.
+  version:
+    provider: mike
+    default: latest
+  social:
+    - icon: material/book-open-variant
+      link: https://docs.wrkz.work/
+      name: The C++ WrkzCoin documentation
+    - icon: material/language-cpp
+      link: https://github.com/wrkzcoin/wrkzcoin
+      name: The C++ WrkzCoin source code
+    - icon: fontawesome/brands/discord
+      link: https://discord.com/invite/KN8PjyuvG4
+      name: WrkzCoin on Discord
+    - icon: fontawesome/brands/x-twitter
+      link: https://x.com/wrkzcoin
+      name: WrkzCoin on X
+    - icon: fontawesome/brands/github
+      link: https://github.com/wrkzcoin
+      name: WrkzCoin on GitHub
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installing a Release: getting-started/install.md
+      - Building from Source: getting-started/build.md
+      - Project Status: getting-started/status.md
+  - Node Operator:
+      - Running a Node: node/index.md
+      - Bringing a Chain Up: node/bringing-a-chain-up.md
+      - Configuration: node/configuration.md
+      - Networking: node/networking.md
+      - Console and IPC: node/console-and-ipc.md
+      - Maintenance: node/maintenance.md
+      - Lite, Pruned and Explorer: node/reduced-modes.md
+      - Lite Node Snapshots: node/lite-snapshots.md
+      - The Database: node/database.md
+      - Mining: node/mining.md
+      - ZMQ and Notify Hooks: node/zmq-and-hooks.md
+      - systemd: node/systemd.md
+      - Checking a Node: node/checking.md
+      - Internals and Differences: node/internals.md
+  - Wallets:
+      - Wallet CLI: wallets/wallet-cli.md
+      - Wallet API: wallets/wallet-api.md
+      - Wallet Service: wallets/service.md
+      - Rust Pluton Wallet: wallets/pluton.md
+      - Transaction PoW Server: wallets/txpow-server.md
+  - RPC Interfaces: rpc/index.md
+  - Tools:
+      - Replay and Consensus Checks: tools/replay.md
+      - Verifying a Chain State: tools/verify-state.md
+      - Diagnostics: tools/diagnostics.md
+  - Building:
+      - Cross-compiling: building/cross-compile.md
+      - Docker: building/docker.md
+  - Protocol Specification:
+      - spec/index.md
+      - Architecture: spec/00-architecture.md
+      - Constants: spec/01-constants.md
+      - Hashing: spec/02-hashing.md
+      - Crypto Primitives: spec/03-crypto-primitives.md
+      - Serialization: spec/04-serialization.md
+      - Addresses, Keys and Mnemonics: spec/05-addresses-keys-mnemonics.md
+      - Transactions: spec/06-transactions.md
+      - Blocks and Consensus: spec/07-blocks-consensus.md
+      - P2P Protocol: spec/08-p2p-protocol.md
+      - RPC and Wallet Sync: spec/09-rpc-and-wallet-sync.md
+      - Wallet: spec/10-wallet.md
+      - Storage: spec/11-storage.md
+      - Roadmap: spec/12-roadmap.md
+      - Test Vectors: spec/vectors.md
+  - Contributing:
+      - Testing: contributing/testing.md
+      - Fuzzing: contributing/fuzzing.md
+      - Documentation: contributing/documentation.md
+  - Changelog: changelog.md
+  - Licence: licence.md
+  # The reference implementation this port follows and is tested against.
+  - C++ WrkzCoin:
+      - C++ Documentation: https://docs.wrkz.work/
+      - C++ Source Code: https://github.com/wrkzcoin/wrkzcoin

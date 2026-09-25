@@ -5,6 +5,10 @@ specification in [`spec/`](spec/README.md), which was taken from the C++
 reference, [wrkzcoin/wrkzcoin](https://github.com/wrkzcoin/wrkzcoin) at commit
 `8d89d7bf`, and it is tested against that code.
 
+Documentation — running a node, the wallets, the RPC and the specification —
+is at <https://docs-rust.wrkz.work/>, built from [`site-docs/`](site-docs/README.md).
+The C++ documentation is at <https://docs.wrkz.work/>.
+
 > **Not ready for production.** Nothing here should serve a public wallet or
 > accept mining until the block-by-block dual run against the live C++ daemon
 > (`scripts/dual-run.py`) has passed. [What is proven so far](#what-is-proven-so-far)

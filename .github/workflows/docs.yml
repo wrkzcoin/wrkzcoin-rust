@@ -1,0 +1,41 @@
+# The documentation site (site-docs/) must build with --strict: a broken link,
+# a missing anchor or a page left out of the nav fails here, not on the server.
+# It builds and nothing more; scripts/docs/publish.sh deploys, by hand.
+#
+# spec/ and fuzz/README.md are pages of the site too (hooks/stage_sources.py),
+# so a change to either is checked as well.
+name: docs
+on:
+  push:
+    branches: [development, main]
+    paths:
+      - 'site-docs/**'
+      - 'spec/**'
+      - 'fuzz/README.md'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    paths:
+      - 'site-docs/**'
+      - 'spec/**'
+      - 'fuzz/README.md'
+      - '.github/workflows/docs.yml'
+permissions:
+  contents: read
+concurrency:
+  group: docs-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: site-docs/requirements.txt
+      - name: requirements
+        run: pip install -r site-docs/requirements.txt
+      - name: build
+        run: mkdocs build --strict -f site-docs/mkdocs.yml

@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+
+{#
+  Shown on every page until the dual run against the live C++ daemon has
+  passed; README.md carries the same warning. Remove both together.
+#}
+{% block announce %}
+  <strong>Not ready for production.</strong>
+  Nothing here should serve a public wallet or accept mining until the
+  block-by-block dual run against the live C++ daemon has passed.
+  <a href="{{ 'getting-started/status/' | url }}">What is proven so far</a>
+{% endblock %}

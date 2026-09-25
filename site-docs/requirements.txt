@@ -1,0 +1,9 @@
+# Pinned exactly, as the Rust toolchain is: a theme or Markdown release that
+# renders differently should arrive as a deliberate change, not on the next
+# publish. mkdocs >= 1.4 is needed at all for the `hooks:` key, which older
+# versions ignore silently. These match the C++ site (docs.wrkz.work), and
+# need Python 3.10 or later (pymdown-extensions 12).
+mkdocs==1.6.1
+mkdocs-material==9.7.1
+mkdocs-minify-plugin==0.8.0
+pymdown-extensions==12.1

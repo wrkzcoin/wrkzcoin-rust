@@ -47,3 +47,8 @@ ipc-*
 
 # Agent worktrees, which are checkouts of this repository inside it.
 .claude/
+
+# The documentation site: no image builds it, and a local build or its
+# virtualenv would otherwise be sent with every `docker build .`.
+site-docs/
+.venv-docs/

@@ -42,6 +42,10 @@ Thumbs.db
 # Kept local: not part of the published repository.
 /docs/
 
+# The documentation site's build output (`mkdocs build`) and its virtualenv.
+/site-docs/site/
+/.venv-docs/
+
 # From GitHub's Rust template
 debug
 target
