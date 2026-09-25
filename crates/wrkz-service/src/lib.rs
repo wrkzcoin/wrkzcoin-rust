@@ -144,6 +144,9 @@ pub struct ServiceConfig {
     /// `--sync-windows`, as in `wrkz-wallet-api`
     /// ([`wrkz_wallet::sync::SyncConfig::height_windows`]).
     pub sync_windows: bool,
+    /// `--sync-max-blocks`, as in `wrkz-wallet-api`
+    /// ([`wrkz_wallet::sync::SyncConfig::max_block_count`]).
+    pub sync_max_blocks: u64,
 }
 
 impl Default for ServiceConfig {
@@ -170,6 +173,7 @@ impl Default for ServiceConfig {
             scan_height: 0,
             skip_coinbase_transactions: false,
             sync_windows: false,
+            sync_max_blocks: wrkz_wallet::sync::SyncConfig::default().max_block_count,
         }
     }
 }

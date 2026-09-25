@@ -1024,8 +1024,9 @@ fn the_mainnet_sample_finds_nothing_and_advances() {
     assert!(!status.is_synced());
 }
 
-/// Far below the tip the C++ asks for four height windows at once. This port
-/// asks for the same four, in the same order, one at a time.
+/// Far below the tip the C++ asks for four height windows at once, and so does
+/// this port, with the same four bodies, stored in the same order. Windows
+/// only apply when empty blocks are skipped.
 #[test]
 fn height_windows_are_requested_below_the_tip() {
     let wallet = spec_wallet(1000);
@@ -1047,7 +1048,12 @@ fn height_windows_are_requested_below_the_tip() {
         });
     }
 
-    let config = SyncConfig { height_windows: true, global_index_retry_delay: Duration::ZERO, ..SyncConfig::default() };
+    let config = SyncConfig {
+        height_windows: true,
+        skip_coinbase_transactions: true,
+        global_index_retry_delay: Duration::ZERO,
+        ..SyncConfig::default()
+    };
     let mut sync = Synchronizer::with_config(daemon, wallet, config);
     sync.refresh_info().unwrap();
 
@@ -1256,6 +1262,193 @@ fn scanning_on_several_threads_matches_one_thread() {
     for threads in [2, 4, 7] {
         assert_eq!(run(threads), one, "{threads} scanning threads");
     }
+}
+
+/// Downloading never runs ahead of applying: a step skips its download while
+/// a chunk is already waiting, so a batch of 1000 against a chunk of 500 costs
+/// one round trip per 1000 blocks and the store never holds more than a batch.
+#[test]
+fn the_store_never_outgrows_what_a_step_applies() {
+    let wallet = spec_wallet(10);
+    let daemon = MockDaemon::new();
+
+    for batch in 0..3u64 {
+        let first = 10 + batch * 1000;
+        daemon.push(response((first..first + 1000).map(|h| block(&format!("q{h}"), h, h)).collect()));
+    }
+
+    let mut sync = synchronizer(daemon, wallet);
+
+    for _ in 0..6 {
+        assert_processed(sync.sync_step(), 500);
+        assert!(sync.stored_block_count() <= 500, "the store holds {}", sync.stored_block_count());
+    }
+
+    assert_eq!(sync.wallet().wallet_height(), 3009);
+    assert_eq!(sync.stored_block_count(), 0);
+    assert_eq!(sync.daemon().requests().len(), 3, "one request per batch, none while a chunk waits");
+}
+
+/// A block that arrives between two `/info` calls is one the daemon evidently
+/// holds, so the wallet keeps asking instead of waiting for the next `/info`
+/// with the daemon looking shorter than itself.
+#[test]
+fn blocks_past_the_last_info_do_not_stall_the_download() {
+    let wallet = spec_wallet(10);
+    let daemon = MockDaemon::new();
+    // `/info` said the top block is 11.
+    daemon.info.replace(Some(info(12, &[], 0)));
+
+    daemon.push(response(vec![block("t10", 10, 1), block("t11", 11, 2)]));
+    daemon.push(response(vec![block("t12", 12, 3)]));
+    daemon.push(response(vec![block("t13", 13, 4)]));
+
+    let mut sync = synchronizer(daemon, wallet);
+
+    assert_processed(sync.sync_step(), 2);
+    assert_processed(sync.sync_step(), 1);
+    // Here the wallet (12) is above what `/info` last reported (11).
+    assert_processed(sync.sync_step(), 1);
+
+    assert_eq!(sync.wallet().wallet_height(), 13);
+    assert_eq!(sync.daemon().requests().len(), 3);
+    assert_eq!(sync.sync_status().local_daemon_block_count, 13);
+}
+
+/// A chunk asks for its global indexes once, before applying anything, with
+/// adjacent 10-block windows merged up to `GLOBAL_INDEX_MERGE_SPAN` heights:
+/// two blocks in one window cost one window, and a run of windows one request.
+#[test]
+fn global_indexes_are_fetched_once_per_run_of_windows() {
+    let wallet = spec_wallet(1000);
+    let daemon = MockDaemon::new();
+
+    let heights: Vec<u64> = [1000, 1003, 1015, 1047].into_iter().chain((1100..1200).step_by(10)).collect();
+    let mut blocks = Vec::new();
+    let mut entries = Vec::new();
+    for (i, &h) in heights.iter().enumerate() {
+        let tx = TxBuilder::new(&format!("paid-{h}")).output_to_wallet(&wallet, 100 + h).build();
+        entries.push(GlobalIndexEntry { key: tx.hash.clone(), value: vec![5000 + i as u64] });
+        blocks.push(with_tx(block(&format!("g{h}"), h, h), tx));
+    }
+    daemon.push(response(blocks));
+
+    // Every answer holds every transaction; what is under test is the asking.
+    for _ in 0..4 {
+        daemon.push_indexes(GlobalIndexes { indexes: entries.clone(), status: "OK".into() });
+    }
+
+    let mut sync = synchronizer(daemon, wallet);
+    assert_processed(sync.sync_step(), heights.len());
+
+    assert_eq!(
+        sync.daemon().index_requests(),
+        vec![(1000, 1020), (1040, 1050), (1100, 1190), (1190, 1200)],
+        "1000 and 1003 share a window, 1000-1020 is one run, and a run stops at 90 heights"
+    );
+
+    let sub = sync.wallet().primary_sub_wallet().unwrap();
+    assert_eq!(sub.unspent_inputs.len(), heights.len());
+    for (i, input) in sub.unspent_inputs.iter().enumerate() {
+        assert_eq!(input.global_output_index, Some(5000 + i as u64));
+    }
+}
+
+/// A rate limited `/get_global_indexes_for_range` is not an answer without our
+/// transaction: it spends none of the retries, applies nothing, keeps every
+/// block, and waits the twenty seconds of a `429`.
+#[test]
+fn a_rate_limited_global_index_request_keeps_the_chunk() {
+    let wallet = spec_wallet(VECTOR_HEIGHT);
+    let daemon = MockDaemon::new();
+
+    let tx = TxBuilder::spec_vector("rl").output_to_wallet(&wallet, 5000).build();
+    let hash = tx.hash.clone();
+    daemon.push(response(vec![with_tx(block("rl0", VECTOR_HEIGHT, 1), tx), block("rl1", VECTOR_HEIGHT + 1, 2)]));
+    daemon.global_indexes.borrow_mut().push_back(Err(DaemonError::RateLimited));
+    daemon.push_indexes(GlobalIndexes {
+        indexes: vec![GlobalIndexEntry { key: hash, value: vec![77] }],
+        status: "OK".into(),
+    });
+
+    let mut sync = synchronizer(daemon, wallet);
+
+    match sync.sync_step() {
+        SyncStep::Failed { error: DaemonError::RateLimited, backoff } => assert_eq!(backoff, Duration::from_secs(20)),
+        other => panic!("expected a rate limited failure, got {other:?}"),
+    }
+    assert_eq!(sync.stored_block_count(), 2, "nothing was dropped");
+    assert!(sync.wallet().transactions().is_empty(), "nothing was applied");
+
+    assert_processed(sync.sync_step(), 2);
+    let sub = sync.wallet().primary_sub_wallet().unwrap();
+    assert_eq!(sub.unspent_inputs[0].global_output_index, Some(77));
+    assert_eq!(sync.daemon().index_requests().len(), 2);
+}
+
+/// A block that cannot be applied leaves the blocks before it applied and
+/// forgets the ones after it, so the next download resumes from the last
+/// block applied instead of skipping over the bad one.
+#[test]
+fn a_block_that_cannot_be_applied_is_downloaded_again_not_skipped() {
+    let wallet = spec_wallet(10);
+    let daemon = MockDaemon::new();
+
+    let mut bad = TxBuilder::new("bad").output_to_stranger("erin", 5).build();
+    bad.tx_public_key = "not hex".into();
+    daemon.push(response(vec![block("m10", 10, 1), with_tx(block("m11", 11, 2), bad), block("m12", 12, 3)]));
+
+    let mut sync = synchronizer(daemon, wallet);
+
+    assert!(matches!(sync.sync_step(), SyncStep::Failed { error: DaemonError::Json(_), .. }));
+    assert_eq!(sync.wallet().wallet_height(), 10);
+    assert_eq!(sync.stored_block_count(), 0);
+
+    let _ = sync.sync_step();
+    let requests = sync.daemon().requests();
+    assert_eq!(requests[1].block_hash_checkpoints[0], label_hash("m10"), "resume after the last block applied");
+}
+
+/// Without skipped coinbases every window stops at one batch, so asking for
+/// windows would be one request a round anyway: the sequential path runs, with
+/// its checkpoints.
+#[test]
+fn height_windows_stand_down_unless_empty_blocks_are_skipped() {
+    let wallet = spec_wallet(1000);
+    let daemon = MockDaemon::new();
+    daemon.info.replace(Some(info(4_000_000, &["heightRange", "skipEmptyBlocks"], 0)));
+
+    daemon.push(response(vec![block("n0", 1000, 1)]));
+    daemon.push(response(vec![block("n1", 1001, 2)]));
+
+    let config = SyncConfig { height_windows: true, ..SyncConfig::default() };
+    let mut sync = Synchronizer::with_config(daemon, wallet, config);
+    sync.refresh_info().unwrap();
+
+    assert_processed(sync.sync_step(), 1);
+    assert_processed(sync.sync_step(), 1);
+
+    let requests = sync.daemon().requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[1].end_height, None);
+    assert_eq!(requests[1].block_hash_checkpoints[0], label_hash("n0"));
+}
+
+/// A ceiling below the default start lowers the start with it, so the first
+/// request is not already over it.
+#[test]
+fn a_low_batch_ceiling_caps_the_first_request() {
+    let daemon = MockDaemon::new();
+    daemon.push(response(vec![block("c0", 10, 1)]));
+
+    let config = SyncConfig { max_block_count: 50, ..SyncConfig::default() };
+    let mut sync = Synchronizer::with_config(daemon, spec_wallet(10), config);
+    assert_eq!(sync.requested_block_count(), 50);
+
+    sync.refresh_info().unwrap();
+    assert_processed(sync.sync_step(), 1);
+    assert_eq!(sync.daemon().block_counts(), vec![50]);
+    assert_eq!(sync.requested_block_count(), 50, "and growing never passes it");
 }
 
 fn vectors() -> std::path::PathBuf {

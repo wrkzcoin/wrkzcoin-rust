@@ -17,7 +17,7 @@
 //! | `Nigel::decreaseRequestedBlockCount` (line 433) | [`Synchronizer::decrease_requested_block_count`] |
 //! | `Nigel::resetRequestedBlockCount` (line 453) | [`Synchronizer::reset_requested_block_count`] |
 //! | `WalletSynchronizer::processTransactionOutputs` (line 645) | `Synchronizer::process_transaction_outputs` |
-//! | `WalletSynchronizer::getGlobalIndexes` (line 705) | `Synchronizer::global_indexes` |
+//! | `WalletSynchronizer::getGlobalIndexes` (line 705) | `Synchronizer::fetch_global_indexes` |
 //! | `WalletSynchronizer::completeBlockProcessing` (line 368) | `Synchronizer::complete_block_processing` |
 //! | `WalletSynchronizer::processBlockTransactions` (line 457) | `Synchronizer::process_block_transactions` |
 //! | `WalletSynchronizer::decryptPaymentID` (line 530) | `Synchronizer::decrypt_payment_id` |
@@ -43,6 +43,11 @@
 //! the caller's thread, strictly in block order. The wire traffic and the
 //! resulting wallet are the same at every thread count.
 //!
+//! A step skips its download while the store already holds a chunk or more,
+//! so downloading cannot run ahead of applying: without that a batch of 1000
+//! against a chunk of 500 grows the store by 500 blocks a round, half the
+//! chain on a first sync, and every round still pays a round trip.
+//!
 //! [`Synchronizer::sync_step`] never sleeps. It reports the backoff the C++
 //! would have slept for (20 s after a `429`, 5 s otherwise) so a caller can
 //! wait, and so a test can assert the policy without waiting.
@@ -52,7 +57,7 @@ use std::time::Duration;
 
 use wrkz_pow::curve;
 use wrkz_primitives::constants::{
-    BLOCKS_SYNCHRONIZING_DEFAULT_COUNT, CRYPTONOTE_LOCKED_TX_ALLOWED_DELTA_BLOCKS,
+    BLOCKS_SYNCHRONIZING_DEFAULT_COUNT, BLOCKS_SYNCHRONIZING_MAX_COUNT, CRYPTONOTE_LOCKED_TX_ALLOWED_DELTA_BLOCKS,
     CRYPTONOTE_LOCKED_TX_ALLOWED_DELTA_SECONDS, CRYPTONOTE_MAX_ALT_BLOCK_DEPTH, CRYPTONOTE_MAX_BLOCK_NUMBER,
     GLOBAL_INDEXES_OBSCURITY, LAST_KNOWN_BLOCK_HASHES_SIZE, MAX_BLOCKS_PER_SYNC_REQUEST, PRUNE_SPENT_INPUTS_INTERVAL,
     SYNC_REQUEST_CONCURRENCY,
@@ -89,6 +94,26 @@ pub const FAILURE_BACKOFF: Duration = Duration::from_secs(5);
 /// (`WalletSynchronizer.cpp:309`).
 pub const GLOBAL_INDEX_RETRY_DELAY: Duration = Duration::from_secs(5);
 
+/// The widest `/get_global_indexes_for_range` a chunk's adjacent 10-block
+/// windows are merged into. A daemon refuses `end - start` at or above its
+/// `--rpc-max-global-index-range`, which is never below 100, so this stays
+/// under it. A merged range tells the daemon less than its windows would,
+/// never more: each window is still inside it.
+pub const GLOBAL_INDEX_MERGE_SPAN: u64 = 90;
+
+/// The highest `--sync-max-blocks`: a daemon answers at most this many blocks
+/// to one request whatever `blockCount` says (`BLOCKS_SYNCHRONIZING_MAX_COUNT`).
+pub const SYNC_MAX_BLOCKS_LIMIT: u64 = BLOCKS_SYNCHRONIZING_MAX_COUNT as u64;
+
+/// `--sync-max-blocks`, as every front end reads it: a whole number from 1 to
+/// [`SYNC_MAX_BLOCKS_LIMIT`], for [`SyncConfig::max_block_count`].
+pub fn parse_sync_max_blocks(text: &str) -> Result<u64, String> {
+    match text.parse::<u64>() {
+        Ok(n) if (1..=SYNC_MAX_BLOCKS_LIMIT).contains(&n) => Ok(n),
+        _ => Err(format!("--sync-max-blocks must be a number from 1 to {SYNC_MAX_BLOCKS_LIMIT}, not {text}")),
+    }
+}
+
 /// `WalletConfig::shortPaymentIDLength`, re-exported from
 /// [`wrkz_primitives::constants`].
 pub use wrkz_primitives::constants::SHORT_PAYMENT_ID_LENGTH;
@@ -117,6 +142,16 @@ pub trait SyncDaemon {
     /// `POST /getwalletsyncdata`.
     fn wallet_sync_data(&self, req: &SyncRequest) -> daemon::Result<WalletSyncData>;
 
+    /// Several `POST /getwalletsyncdata`, answered in request order: the
+    /// height windows of `Synchronizer::download_height_windows`.
+    ///
+    /// The default asks one after another. A client that can hold several
+    /// connections at once overrides it with [`wallet_sync_data_concurrently`],
+    /// which is what `downloadBlocksInParallel` does.
+    fn wallet_sync_data_many(&self, reqs: &[SyncRequest]) -> Vec<daemon::Result<WalletSyncData>> {
+        reqs.iter().map(|r| self.wallet_sync_data(r)).collect()
+    }
+
     /// `POST /get_global_indexes_for_range`, `[start, end)`.
     fn global_indexes_for_range(&self, start: u64, end: u64) -> daemon::Result<GlobalIndexes>;
 
@@ -133,6 +168,10 @@ impl SyncDaemon for Daemon {
         Daemon::wallet_sync_data(self, req)
     }
 
+    fn wallet_sync_data_many(&self, reqs: &[SyncRequest]) -> Vec<daemon::Result<WalletSyncData>> {
+        wallet_sync_data_concurrently(self, reqs)
+    }
+
     fn global_indexes_for_range(&self, start: u64, end: u64) -> daemon::Result<GlobalIndexes> {
         Daemon::global_indexes_for_range(self, start, end)
     }
@@ -144,6 +183,23 @@ impl SyncDaemon for Daemon {
     fn info(&self) -> daemon::Result<Info> {
         Daemon::info(self)
     }
+}
+
+/// [`SyncDaemon::wallet_sync_data_many`] with one thread per request, for a
+/// client that can be shared between threads. The answers come back in
+/// request order whatever order they arrive in.
+#[cfg(feature = "native")]
+pub fn wallet_sync_data_concurrently<D: SyncDaemon + Sync + ?Sized>(
+    client: &D,
+    reqs: &[SyncRequest],
+) -> Vec<daemon::Result<WalletSyncData>> {
+    if reqs.len() < 2 {
+        return reqs.iter().map(|r| client.wallet_sync_data(r)).collect();
+    }
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = reqs.iter().map(|r| scope.spawn(move || client.wallet_sync_data(r))).collect();
+        handles.into_iter().map(|h| h.join().unwrap_or_else(|p| std::panic::resume_unwind(p))).collect()
+    })
 }
 
 ////////////////////
@@ -704,7 +760,12 @@ pub struct SyncConfig {
     /// the floor the `400` halving stops at.
     pub start_block_count: u64,
     /// The ceiling the batch grows to (`WalletConfig::maxBlocksPerSyncRequest`),
-    /// lowered whenever a daemon answers `400`.
+    /// lowered whenever a daemon answers `400`: `--sync-max-blocks` on
+    /// `wrkz-wallet`, `wrkz-wallet-api`, `wrkz-wallet-sync` and `wrkz-service`.
+    ///
+    /// Above the default it only pays against a daemon started with a higher
+    /// `--rpc-max-block-count`; any other answers the larger batch with `400`,
+    /// which brings the ceiling back down within a round or two.
     pub max_block_count: u64,
     /// Blocks applied per [`Synchronizer::sync_step`] (`BLOCK_PROCESSING_CHUNK`).
     pub block_processing_chunk: usize,
@@ -727,6 +788,12 @@ pub struct SyncConfig {
     /// round trips it saved. On a daemon of your own, or on a long first sync
     /// where the round trip dominates, turn it on. See
     /// `Synchronizer::download_height_windows`.
+    ///
+    /// It only takes effect with [`SyncConfig::skip_coinbase_transactions`]
+    /// against a daemon that advertises `skipEmptyBlocks`. Otherwise every
+    /// block holds a coinbase we want, the daemon stops each window at one
+    /// batch, and the first window ends the run: one request a round, the
+    /// same as the sequential path.
     pub height_windows: bool,
     /// `WalletConfig::syncRequestConcurrency` (4): windows per round.
     pub sync_request_concurrency: u64,
@@ -826,6 +893,8 @@ pub enum SyncStep {
 /// returns a bare bool; this says why).
 #[derive(Debug)]
 enum Download {
+    /// Not asked: the store already holds a chunk to apply.
+    Deferred,
     Stored,
     Synced(u64),
     Idle,
@@ -891,8 +960,9 @@ impl<D: SyncDaemon> Synchronizer<D> {
         let key_image_owners = wallet.key_image_owners();
         let start_height = wallet.wallet_synchronizer.start_height;
         let start_timestamp = wallet.wallet_synchronizer.start_timestamp;
-        let block_count = config.start_block_count;
-        let max_block_count = config.max_block_count;
+        // A ceiling set below the default start lowers the start with it.
+        let max_block_count = config.max_block_count.max(1);
+        let block_count = config.start_block_count.clamp(1, max_block_count);
 
         Synchronizer {
             daemon,
@@ -1029,6 +1099,18 @@ impl<D: SyncDaemon> Synchronizer<D> {
         Ok(info)
     }
 
+    /// The daemon has just handed us block `height`, so it holds at least that
+    /// much, whatever the last `/info` said.
+    ///
+    /// Without this a block that arrives between two `/info` calls puts the
+    /// wallet above the cached daemon height, and `download_step`, which stands
+    /// still while the daemon looks shorter than the wallet, asks for nothing
+    /// until the next `/info`.
+    fn note_daemon_holds(&mut self, height: u64) {
+        self.state.local_block_count = self.state.local_block_count.max(height);
+        self.state.network_block_count = self.state.network_block_count.max(height);
+    }
+
     ////////////////////////
     /* BATCH SIZE         */
     ////////////////////////
@@ -1125,46 +1207,63 @@ impl<D: SyncDaemon> Synchronizer<D> {
         end_height: Option<u64>,
     ) -> daemon::Result<WalletSyncData> {
         loop {
-            let request = SyncRequest {
-                block_hash_checkpoints: checkpoints.to_vec(),
-                start_height,
-                start_timestamp,
-                block_count: self.block_count,
-                skip_coinbase_transactions: self.config.skip_coinbase_transactions,
-                skip_input_key_offsets: Some(true),
-                skip_empty_blocks: (self.config.skip_coinbase_transactions && self.state.skips_empty_blocks)
-                    .then_some(true),
-                encoding: None,
-                end_height,
-            };
+            let request = self.sync_request(checkpoints, start_height, start_timestamp, end_height);
 
             match self.daemon.wallet_sync_data(&request) {
                 Ok(data) => {
                     self.last_request_rate_limited = false;
                     return Ok(data);
                 }
-                Err(DaemonError::RateLimited) => {
-                    self.last_request_rate_limited = true;
-                    return Err(DaemonError::RateLimited);
-                }
                 Err(DaemonError::BadRequest(body)) => {
                     self.last_request_rate_limited = false;
 
-                    if self.block_count > self.config.start_block_count {
-                        let reduced = (self.block_count / 2).max(self.config.start_block_count);
-                        self.max_block_count = reduced;
-                        self.block_count = reduced;
+                    if self.lower_ceiling_after_bad_request() {
                         continue;
                     }
 
                     return Err(DaemonError::BadRequest(body));
                 }
                 Err(e) => {
-                    self.last_request_rate_limited = false;
+                    self.last_request_rate_limited = matches!(e, DaemonError::RateLimited);
                     return Err(e);
                 }
             }
         }
+    }
+
+    /// The body `Nigel::getWalletSyncData` sends at the current batch size.
+    fn sync_request(
+        &self,
+        checkpoints: &[String],
+        start_height: u64,
+        start_timestamp: u64,
+        end_height: Option<u64>,
+    ) -> SyncRequest {
+        SyncRequest {
+            block_hash_checkpoints: checkpoints.to_vec(),
+            start_height,
+            start_timestamp,
+            block_count: self.block_count,
+            skip_coinbase_transactions: self.config.skip_coinbase_transactions,
+            skip_input_key_offsets: Some(true),
+            skip_empty_blocks: (self.config.skip_coinbase_transactions && self.state.skips_empty_blocks)
+                .then_some(true),
+            encoding: None,
+            end_height,
+        }
+    }
+
+    /// The `400` rule: a batch above the default was over the daemon's
+    /// `--rpc-max-block-count`, so remember a halved ceiling. Returns whether
+    /// it lowered anything, which is whether asking again can help.
+    fn lower_ceiling_after_bad_request(&mut self) -> bool {
+        if self.block_count <= self.config.start_block_count {
+            return false;
+        }
+        let reduced = (self.block_count / 2).max(self.config.start_block_count);
+        self.max_block_count = reduced;
+        self.block_count = reduced;
+        true
     }
 
     fn record_sync_gap(&mut self, covered_to: u64, daemon_serves_from: u64) {
@@ -1189,6 +1288,10 @@ impl<D: SyncDaemon> Synchronizer<D> {
                     block.block_height, block.block_hash
                 )));
             }
+        }
+
+        if let Some(last) = blocks.last() {
+            self.note_daemon_holds(last.block_height);
         }
 
         let count = blocks.len();
@@ -1259,6 +1362,7 @@ impl<D: SyncDaemon> Synchronizer<D> {
                             .wallet_synchronizer
                             .transaction_synchronizer_status
                             .store_block_hash(hash, top.height);
+                        self.note_daemon_holds(top.height);
 
                         return Download::Synced(top.height);
                     }
@@ -1336,15 +1440,19 @@ impl<D: SyncDaemon> Synchronizer<D> {
     /// consecutive height windows carrying no checkpoints.
     ///
     /// The C++ issues the four requests concurrently and stores the answers in
-    /// order. This port issues the same four requests, with the same bodies and
-    /// in the same order, one after another — same wire traffic, same stored
-    /// blocks, no threads. Off by default ([`SyncConfig::height_windows`]).
+    /// order. So does this, through [`SyncDaemon::wallet_sync_data_many`],
+    /// with the same bodies: a client that cannot hold several connections
+    /// sends them one after another instead. Off by default
+    /// ([`SyncConfig::height_windows`]), and idle unless empty blocks are
+    /// being skipped, the only case where a window can hold more than a batch.
     ///
     /// `None` means the path does not apply and the sequential one should run.
     fn download_height_windows(&mut self) -> Option<Download> {
         let first_height = self.next_download_height;
 
         if !self.config.height_windows
+            || !self.config.skip_coinbase_transactions
+            || !self.state.skips_empty_blocks
             || self.config.sync_request_concurrency < 2
             || first_height == 0
             || self.sync_gap.is_some()
@@ -1364,14 +1472,38 @@ impl<D: SyncDaemon> Synchronizer<D> {
             return None;
         }
 
-        let mut completed_windows = 0;
+        let requests: Vec<SyncRequest> = (0..self.config.sync_request_concurrency)
+            .map(|i| {
+                let window_start = first_height + window * i;
+                self.sync_request(&[], window_start, 0, Some(window_start + window))
+            })
+            .collect();
 
-        for i in 0..self.config.sync_request_concurrency {
-            let window_start = first_height + window * i;
+        let answers = self.daemon.wallet_sync_data_many(&requests);
+
+        let mut completed_windows = 0;
+        let mut failure = None;
+
+        for (request, answer) in requests.iter().zip(answers) {
+            let window_start = request.start_height;
             let window_end = window_start + window;
 
-            let Ok(data) = self.request_sync_data(&[], window_start, 0, Some(window_end)) else {
-                break;
+            let data = match answer {
+                Ok(data) => {
+                    self.last_request_rate_limited = false;
+                    data
+                }
+                Err(e) => {
+                    // The sequential path retries a `400` at once with the
+                    // lower ceiling; a window run just takes the lower
+                    // ceiling into its next round.
+                    if matches!(e, DaemonError::BadRequest(_)) {
+                        self.lower_ceiling_after_bad_request();
+                    }
+                    self.last_request_rate_limited = matches!(e, DaemonError::RateLimited);
+                    failure = Some(e);
+                    break;
+                }
             };
 
             let scanned_to_height = data.scanned_to_height.unwrap_or(0);
@@ -1398,6 +1530,11 @@ impl<D: SyncDaemon> Synchronizer<D> {
 
         if completed_windows == 0 {
             self.next_download_height = 0;
+            // Asking again at once, down the sequential path, would only be
+            // rate limited again: wait the twenty seconds instead.
+            if let Some(DaemonError::RateLimited) = failure {
+                return Some(Download::Failed(DaemonError::RateLimited));
+            }
             return None;
         }
 
@@ -1560,52 +1697,115 @@ impl<D: SyncDaemon> Synchronizer<D> {
         results.into_iter().map(|r| r.expect("every block is claimed by exactly one thread")).collect()
     }
 
-    /// `WalletSynchronizer::getGlobalIndexes` (line 705): the indexes for the
-    /// 10-block window containing this height, so the daemon cannot tell which
-    /// transaction is ours (`GLOBAL_INDEXES_OBSCURITY`). A failure is an empty
-    /// map, as the C++ returns.
-    fn global_indexes(&self, block_height: u64) -> HashMap<Hash, Vec<u64>> {
-        let start = lower_bound(block_height, GLOBAL_INDEXES_OBSCURITY);
-        let end = upper_bound(block_height, GLOBAL_INDEXES_OBSCURITY);
+    /// `WalletSynchronizer::getGlobalIndexes` (line 705): the indexes for
+    /// `[start, end)`, a whole number of 10-block windows, so the daemon cannot
+    /// tell which transaction is ours (`GLOBAL_INDEXES_OBSCURITY`), added to
+    /// `into`.
+    ///
+    /// The C++ reads every failure as an empty map, which then counts against
+    /// the retries of [`Synchronizer::fill_global_indexes`] — so a daemon that
+    /// is rate limiting or unreachable for ten seconds leaves an input it
+    /// could have indexed unspendable. Here a `429` or a failed connection is
+    /// returned instead, and the chunk waits for the daemon; any other failure
+    /// is an answer that holds nothing, as in the C++.
+    ///
+    /// A lite daemon refuses a range starting below its first block, which a
+    /// window rounded down can do, so the start is raised to meet it.
+    fn fetch_global_indexes(&self, start: u64, end: u64, into: &mut HashMap<Hash, Vec<u64>>) -> daemon::Result<()> {
+        let lite_start_height = self.state.lite_start_height;
+        let start = if start < lite_start_height && lite_start_height < end { lite_start_height } else { start };
 
         match self.daemon.global_indexes_for_range(start, end) {
-            Ok(indexes) => indexes
-                .indexes
-                .into_iter()
-                .filter_map(|entry| Hex32::from_hex(&entry.key).map(|h| (h, entry.value)))
-                .collect(),
-            Err(_) => HashMap::new(),
+            Ok(indexes) => {
+                into.extend(
+                    indexes
+                        .indexes
+                        .into_iter()
+                        .filter_map(|entry| Hex32::from_hex(&entry.key).map(|h| (h, entry.value))),
+                );
+                Ok(())
+            }
+            Err(e @ (DaemonError::RateLimited | DaemonError::Transport(_))) => Err(e),
+            Err(_) => Ok(()),
         }
     }
 
-    /// `WalletSynchronizer::blockProcessingThread` (line 202), the global index
-    /// half: for a block with owned outputs, ask once for the window, and retry
-    /// up to [`GLOBAL_INDEX_MAX_RETRIES`] times when the answer does not hold
-    /// our transaction — a fork, or a faulty daemon. After that the index is
-    /// left unset with a warning, and spending that input needs a rescan
-    /// against a full node.
-    fn fill_global_indexes(&mut self, block_height: u64, inputs: &mut [OwnedInput]) {
+    /// Everything a chunk needs from `/get_global_indexes_for_range`, asked for
+    /// before any block of it is applied: one request per run of adjacent
+    /// 10-block windows up to [`GLOBAL_INDEX_MERGE_SPAN`] heights, rather than
+    /// one per block with outputs of ours. A wallet paid in most blocks — a
+    /// pool's, a miner's — would otherwise make a round trip per block.
+    fn prefetch_global_indexes<'a>(
+        &self,
+        scanned: impl Iterator<Item = (&'a SyncBlock, &'a daemon::Result<Vec<OwnedInput>>)>,
+    ) -> daemon::Result<HashMap<Hash, Vec<u64>>> {
+        let mut indexes = HashMap::new();
+
         if self.wallet.is_view_wallet() {
-            return;
+            return Ok(indexes);
         }
 
-        let mut indexes: Option<HashMap<Hash, Vec<u64>>> = None;
+        let mut windows: Vec<u64> = scanned
+            .filter(|(_, inputs)| {
+                inputs.as_ref().is_ok_and(|inputs| inputs.iter().any(|(_, i)| i.global_output_index.is_none()))
+            })
+            .map(|(block, _)| lower_bound(block.block_height, GLOBAL_INDEXES_OBSCURITY))
+            .collect();
+
+        windows.sort_unstable();
+        windows.dedup();
+
+        let mut next = 0;
+        while next < windows.len() {
+            let start = windows[next];
+            let mut end = start + GLOBAL_INDEXES_OBSCURITY;
+            next += 1;
+
+            while next < windows.len()
+                && windows[next] == end
+                && end + GLOBAL_INDEXES_OBSCURITY - start <= GLOBAL_INDEX_MERGE_SPAN
+            {
+                end += GLOBAL_INDEXES_OBSCURITY;
+                next += 1;
+            }
+
+            self.fetch_global_indexes(start, end, &mut indexes)?;
+        }
+
+        Ok(indexes)
+    }
+
+    /// `WalletSynchronizer::blockProcessingThread` (line 202), the global index
+    /// half: take each owned output's index from what
+    /// [`Synchronizer::prefetch_global_indexes`] fetched, and ask again for the
+    /// block's window, up to [`GLOBAL_INDEX_MAX_RETRIES`] lookups in all, when
+    /// the answer does not hold our transaction — a fork, or a faulty daemon.
+    /// After that the index is left unset, and spending that input needs a
+    /// rescan against a full node.
+    ///
+    /// An error is a daemon that could not be asked at all; see
+    /// [`Synchronizer::fetch_global_indexes`].
+    fn fill_global_indexes(
+        &self,
+        block_height: u64,
+        inputs: &mut [OwnedInput],
+        indexes: &mut HashMap<Hash, Vec<u64>>,
+    ) -> daemon::Result<()> {
+        if self.wallet.is_view_wallet() {
+            return Ok(());
+        }
 
         for (_, input) in inputs.iter_mut() {
             if input.global_output_index.is_some() {
                 continue;
             }
 
-            if indexes.is_none() {
-                indexes = Some(self.global_indexes(block_height));
-            }
-
+            // The prefetch was the first lookup.
             let mut attempts = 1;
 
             loop {
                 let found = indexes
-                    .as_ref()
-                    .and_then(|m| m.get(&input.parent_transaction_hash))
+                    .get(&input.parent_transaction_hash)
                     .filter(|v| v.len() > input.transaction_index as usize)
                     .map(|v| v[input.transaction_index as usize]);
 
@@ -1622,9 +1822,15 @@ impl<D: SyncDaemon> Synchronizer<D> {
 
                 crate::platform::sleep(self.config.global_index_retry_delay);
 
-                indexes = Some(self.global_indexes(block_height));
+                self.fetch_global_indexes(
+                    lower_bound(block_height, GLOBAL_INDEXES_OBSCURITY),
+                    upper_bound(block_height, GLOBAL_INDEXES_OBSCURITY),
+                    indexes,
+                )?;
             }
         }
+
+        Ok(())
     }
 
     ////////////////////////
@@ -1851,43 +2057,91 @@ impl<D: SyncDaemon> Synchronizer<D> {
         Ok(added)
     }
 
-    /// Apply one downloaded block whose outputs [`Synchronizer::scan_blocks`]
-    /// has already scanned: global indexes, then the block itself
-    /// (`WalletSynchronizer::syncStep`'s body, line 878).
-    fn apply_scanned_block(&mut self, block: &SyncBlock, mut our_inputs: Vec<OwnedInput>) -> daemon::Result<usize> {
-        if !our_inputs.is_empty() {
-            self.fill_global_indexes(block.block_height, &mut our_inputs);
+    /// Put blocks taken from the front of the store back where they were.
+    fn requeue_blocks(&mut self, blocks: VecDeque<SyncBlock>) {
+        for block in blocks.into_iter().rev() {
+            self.stored_blocks.push_front(block);
         }
+    }
 
-        self.complete_block_processing(block, &our_inputs)
+    /// Forget every block downloaded and not applied, so the next download
+    /// resumes after the last block applied. Used when a block cannot be
+    /// applied: carrying on with the blocks behind it would leave a hole.
+    fn discard_stored_blocks(&mut self) {
+        self.stored_blocks.clear();
+        self.next_download_height = 0;
     }
 
     /// Apply up to [`SyncConfig::block_processing_chunk`] stored blocks.
     /// Returns `(blocks, transactions added)`.
+    ///
+    /// On an error the blocks already applied stay applied, and nothing after
+    /// them is skipped: a daemon that could not be asked for global indexes
+    /// leaves the rest in the store for the next step, and a block that cannot
+    /// be applied at all empties the store, to be downloaded again.
     fn process_stored_blocks(&mut self) -> daemon::Result<(usize, usize)> {
-        let take = self.config.block_processing_chunk.min(self.stored_blocks.len());
+        let take = self.config.block_processing_chunk.max(1).min(self.stored_blocks.len());
 
         if take == 0 {
             return Ok((0, 0));
         }
 
-        let blocks: Vec<SyncBlock> = self.stored_blocks.drain(..take).collect();
+        let mut blocks: VecDeque<SyncBlock> = self.stored_blocks.drain(..take).collect();
 
         // The expensive half — reading nothing a sync changes — runs for the
         // whole chunk across threads first. The other half applies the blocks
         // strictly in order, as before: the fork unwind, the key-image owners
         // and the spent marks all depend on the block before. An error stops
         // the chunk at the same block it did when both halves ran per block.
-        let scanned =
-            Self::scan_blocks(&self.wallet, self.config.skip_coinbase_transactions, &blocks, self.config.scan_threads);
+        let scanned = Self::scan_blocks(
+            &self.wallet,
+            self.config.skip_coinbase_transactions,
+            blocks.make_contiguous(),
+            self.config.scan_threads,
+        );
 
+        let mut indexes = match self.prefetch_global_indexes(blocks.iter().zip(&scanned)) {
+            Ok(indexes) => indexes,
+            Err(e) => {
+                self.requeue_blocks(blocks);
+                return Err(e);
+            }
+        };
+
+        let mut applied = 0;
         let mut transactions = 0;
+        let mut scanned = scanned.into_iter();
 
-        for (block, our_inputs) in blocks.iter().zip(scanned) {
-            transactions += self.apply_scanned_block(block, our_inputs?)?;
+        while let Some(block) = blocks.pop_front() {
+            let mut our_inputs = match scanned.next().expect("one scan per block") {
+                Ok(inputs) => inputs,
+                Err(e) => {
+                    self.discard_stored_blocks();
+                    return Err(e);
+                }
+            };
+
+            if !our_inputs.is_empty() {
+                if let Err(e) = self.fill_global_indexes(block.block_height, &mut our_inputs, &mut indexes) {
+                    blocks.push_front(block);
+                    self.requeue_blocks(blocks);
+                    return Err(e);
+                }
+            }
+
+            match self.complete_block_processing(&block, &our_inputs) {
+                Ok(added) => {
+                    applied += 1;
+                    transactions += added;
+                }
+                Err(e) => {
+                    self.discard_stored_blocks();
+                    return Err(e);
+                }
+            }
         }
 
-        Ok((blocks.len(), transactions))
+        Ok((applied, transactions))
     }
 
     /// One round: download a batch, then scan and apply what is stored.
@@ -1897,14 +2151,25 @@ impl<D: SyncDaemon> Synchronizer<D> {
     pub fn sync_step(&mut self) -> SyncStep {
         self.step_added.clear();
 
-        let download = match self.download_height_windows() {
-            Some(outcome) => outcome,
-            None => self.download_step(),
+        let download = if self.stored_blocks.len() >= self.config.block_processing_chunk.max(1) {
+            Download::Deferred
+        } else {
+            match self.download_height_windows() {
+                Some(outcome) => outcome,
+                None => self.download_step(),
+            }
         };
 
         let processed = match self.process_stored_blocks() {
             Ok(processed) => processed,
-            Err(e) => return SyncStep::Failed { error: e, backoff: self.config.failure_backoff },
+            Err(e) => {
+                let backoff = if matches!(e, DaemonError::RateLimited) {
+                    self.config.rate_limited_backoff
+                } else {
+                    self.config.failure_backoff
+                };
+                return SyncStep::Failed { error: e, backoff };
+            }
         };
 
         if processed.0 > 0 {
@@ -1916,7 +2181,7 @@ impl<D: SyncDaemon> Synchronizer<D> {
         }
 
         match download {
-            Download::Stored => SyncStep::Idle { backoff: Duration::ZERO },
+            Download::Deferred | Download::Stored => SyncStep::Idle { backoff: Duration::ZERO },
             Download::Synced(height) => SyncStep::Synced { height },
             Download::Idle => SyncStep::Idle { backoff: self.config.failure_backoff },
             Download::Failed(error) => {

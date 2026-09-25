@@ -352,6 +352,11 @@ impl SyncDaemon for IpcDaemon {
         Self::checked(self.post("/getwalletsyncdata", req)?)
     }
 
+    /// Every call is a connection of its own, so the windows go at once.
+    fn wallet_sync_data_many(&self, reqs: &[SyncRequest]) -> Vec<Result<WalletSyncData>> {
+        crate::sync::wallet_sync_data_concurrently(self, reqs)
+    }
+
     fn global_indexes_for_range(&self, start: u64, end: u64) -> Result<GlobalIndexes> {
         Self::checked(
             self.post("/get_global_indexes_for_range", &serde_json::json!({ "startHeight": start, "endHeight": end }))?,

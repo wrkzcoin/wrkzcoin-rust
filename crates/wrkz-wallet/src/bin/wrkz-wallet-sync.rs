@@ -13,7 +13,7 @@
 //!     --address Wrkz... \
 //!     --scan-height 4200000 \
 //!     [--out view.wallet] [--password secret] [--max-steps 100000] [--skip-coinbase]
-//!     [--sync-windows] [--quiet]
+//!     [--sync-windows] [--sync-max-blocks 1000] [--quiet]
 //! ```
 //!
 //! The wallet built here is view-only: it finds incoming outputs and their
@@ -44,6 +44,10 @@ wrkz-wallet-sync — view-sync an address and print its transactions and balance
     --max-steps N        stop after N sync rounds (default: unlimited)
     --skip-coinbase      do not scan coinbase transactions
     --sync-windows       ask for four height windows a round far below the tip
+                         (with --skip-coinbase, from a daemon offering skipEmptyBlocks)
+    --sync-max-blocks N  most blocks one request asks for (default 1000, at most
+                         10000; above 1000 needs a daemon with a higher
+                         --rpc-max-block-count)
     --quiet              no progress lines on stderr
 ";
 
@@ -57,6 +61,7 @@ struct Args {
     max_steps: usize,
     skip_coinbase: bool,
     sync_windows: bool,
+    sync_max_blocks: u64,
     quiet: bool,
 }
 
@@ -71,6 +76,7 @@ fn parse_args() -> Result<Args, String> {
         max_steps: usize::MAX,
         skip_coinbase: false,
         sync_windows: false,
+        sync_max_blocks: SyncConfig::default().max_block_count,
         quiet: false,
     };
 
@@ -95,6 +101,7 @@ fn parse_args() -> Result<Args, String> {
             }
             "--skip-coinbase" => args.skip_coinbase = true,
             "--sync-windows" => args.sync_windows = true,
+            "--sync-max-blocks" => args.sync_max_blocks = wrkz_wallet::sync::parse_sync_max_blocks(&value()?)?,
             "--quiet" => args.quiet = true,
             "-h" | "--help" => return Err(String::new()),
             other => return Err(format!("unknown argument {other}")),
@@ -157,6 +164,7 @@ fn main() -> ExitCode {
     let config = SyncConfig {
         skip_coinbase_transactions: args.skip_coinbase,
         height_windows: args.sync_windows,
+        max_block_count: args.sync_max_blocks,
         ..SyncConfig::default()
     };
     let mut sync = Synchronizer::with_config(daemon, wallet, config);

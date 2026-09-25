@@ -53,6 +53,11 @@ Wallet
   --address                  print the container's addresses and exit
   --skip-coinbase-transactions   do not scan coinbase outputs
   --sync-windows             ask for four height windows a round far below the tip
+                             (with --skip-coinbase-transactions, from a daemon
+                             offering skipEmptyBlocks)
+  --sync-max-blocks <n>      most blocks one sync request asks for (default 1000,
+                             at most 10000; above 1000 needs a daemon with a
+                             higher --rpc-max-block-count)
 
 Network
   --bind-address <ip>        interface for the RPC (default 127.0.0.1)
@@ -172,6 +177,7 @@ fn run() -> Result<i32, String> {
     let sync = wrkz_wallet::sync::SyncConfig {
         skip_coinbase_transactions: args.cfg.skip_coinbase_transactions,
         height_windows: args.cfg.sync_windows,
+        max_block_count: args.cfg.sync_max_blocks,
         ..wrkz_wallet::sync::SyncConfig::default()
     };
     let open = wrkz_wallet::api::open_container_with(
@@ -366,6 +372,7 @@ fn dump(cfg: &ServiceConfig) -> String {
     line("scan-height", cfg.scan_height.to_string());
     line("skip-coinbase-transactions", cfg.skip_coinbase_transactions.to_string());
     line("sync-windows", cfg.sync_windows.to_string());
+    line("sync-max-blocks", cfg.sync_max_blocks.to_string());
     out
 }
 
@@ -553,6 +560,10 @@ fn parse(argv: &[String]) -> Result<Args, String> {
                 args.cfg.scan_height = number(&value(i, arg)?, arg)?;
                 took = 2;
             }
+            "--sync-max-blocks" => {
+                args.cfg.sync_max_blocks = wrkz_wallet::sync::parse_sync_max_blocks(&value(i, arg)?)?;
+                took = 2;
+            }
             "--view-key" => {
                 args.view_key = Some(value(i, arg)?);
                 took = 2;
@@ -610,6 +621,7 @@ mod tests {
         cfg.tx_confirmed_notify = "http://127.0.0.1:9000/confirmed?key=a:b".into();
         cfg.notify_during_sync = true;
         cfg.log_level = 4;
+        cfg.sync_max_blocks = 4000;
         let dumped = dump(&cfg);
         let path = temp_config("dumped.conf", &dumped);
         let args = parse(&["--config".to_string(), path.clone()]).expect("reads back");
@@ -617,6 +629,7 @@ mod tests {
         assert_eq!(args.cfg.tx_notify, cfg.tx_notify, "quotes, `=`, `#` and all");
         assert_eq!(args.cfg.bind_ipc_mode, 0o660);
         assert!(args.cfg.notify_during_sync);
+        assert_eq!(args.cfg.sync_max_blocks, 4000);
         let _ = std::fs::remove_file(&path);
     }
 

@@ -29,8 +29,9 @@ use std::time::Duration;
 use wrkz_rpc::http::{HttpLimits, Request};
 
 use super::view::Fingerprint;
-use super::{dispatch, ApiState, SyncLog};
+use super::{dispatch, ApiState, SyncLog, INFO_REFRESH_INTERVAL};
 use crate::listen::{Handler, IpcConfig, ListenConfig, Listener, Peer};
+use crate::sync::SyncStep;
 
 /// How the listeners behave. The defaults match the daemon's.
 #[derive(Clone, Debug)]
@@ -163,17 +164,28 @@ pub fn start(state: Arc<ApiState>, config: ServeConfig) -> std::io::Result<Runni
     Ok(RunningApi { listener, addr, stopping, sync: Some(sync) })
 }
 
+/// While a sync is catching up and nothing but the heights moved, the published
+/// view is refreshed at most this often.
+const HEIGHT_ONLY_PUBLISH_INTERVAL: Duration = Duration::from_secs(1);
+
 /// One round of syncing per pass, then whatever wait the step asked for.
 ///
 /// The working wallet is held for the whole step, round trip included, so a
 /// step is applied all at once; a change a route makes waits for at most that
 /// one step. What the step changed is published before the wallet is let go,
 /// so the read-only routes, which never take it, see it straight away.
+///
+/// Publishing copies the whole container, and a catching-up sync applies a
+/// chunk every few milliseconds. A step that only moved the heights is
+/// therefore published at most once a [`HEIGHT_ONLY_PUBLISH_INTERVAL`]; a
+/// transaction, a fork, a gap, or the step that ends catching up is published
+/// at once.
 fn sync_loop(state: &Arc<ApiState>, stopping: &AtomicBool) {
-    let mut ticks_since_info = 0u32;
+    let mut last_info = std::time::Instant::now();
     let mut log = SyncLog::default();
-    // What this loop last published; `None` publishes on the next step.
+    // What this loop last published, and when; `None` publishes on the next step.
     let mut published: Option<Fingerprint> = None;
+    let mut last_publish = std::time::Instant::now();
 
     while !stopping.load(Ordering::SeqCst) {
         let wait = {
@@ -188,10 +200,8 @@ fn sync_loop(state: &Arc<ApiState>, stopping: &AtomicBool) {
                     Duration::from_millis(250)
                 }
                 Some(open) => {
-                    // `Nigel`'s ten-second `/info` cadence.
-                    ticks_since_info += 1;
-                    if ticks_since_info >= 40 {
-                        ticks_since_info = 0;
+                    if last_info.elapsed() >= INFO_REFRESH_INTERVAL {
+                        last_info = std::time::Instant::now();
                         open.refresh_info();
                     }
                     let round = open.sync_round();
@@ -201,9 +211,13 @@ fn sync_loop(state: &Arc<ApiState>, stopping: &AtomicBool) {
                     // A synced wallet idling at the tip changes nothing, and
                     // copies nothing.
                     let now = Fingerprint::of(open);
-                    if published != Some(now) {
+                    let heights_only_and_recent = matches!(round.step, SyncStep::Processed { .. })
+                        && published.is_some_and(|p| p.same_but_heights(&now))
+                        && last_publish.elapsed() < HEIGHT_ONLY_PUBLISH_INTERVAL;
+                    if published != Some(now) && !heights_only_and_recent {
                         state.publish(Some(open));
                         published = Some(now);
+                        last_publish = std::time::Instant::now();
                     }
                     round.wait
                 }

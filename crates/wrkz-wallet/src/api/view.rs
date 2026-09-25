@@ -153,6 +153,13 @@ pub struct Fingerprint {
 }
 
 impl Fingerprint {
+    /// Whether `self` and `other` agree on everything but the heights — the
+    /// wallet's, the daemon's and the network's — which is all that most steps
+    /// of a long sync change.
+    pub fn same_but_heights(&self, other: &Fingerprint) -> bool {
+        Fingerprint { wallet_height: other.wallet_height, status: other.status, ..*self } == *other
+    }
+
     /// `open`'s fingerprint now.
     pub fn of(open: &OpenWallet) -> Fingerprint {
         let wallet = open.wallet();

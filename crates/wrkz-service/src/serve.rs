@@ -29,7 +29,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use wrkz_rpc::http::{self, HttpLimits, Request, Response};
-use wrkz_wallet::api::SyncLog;
+use wrkz_wallet::api::{SyncLog, INFO_REFRESH_INTERVAL};
 use wrkz_wallet::listen::{Handler, IpcConfig, ListenConfig, Listener, Peer};
 
 use crate::ServiceState;
@@ -152,15 +152,13 @@ pub fn start(state: Arc<ServiceState>, config: ServeConfig) -> std::io::Result<R
 /// lock is taken and released per step, so a request never waits on more than
 /// one daemon round trip.
 fn sync_loop(state: &Arc<ServiceState>) {
-    let mut ticks_since_info = 0u32;
+    let mut last_info = std::time::Instant::now();
     let mut log = SyncLog::default();
     while !state.stopping.load(Ordering::SeqCst) {
         let wait = {
             let mut open = state.write();
-            // `Nigel`'s ten-second `/info` cadence.
-            ticks_since_info += 1;
-            if ticks_since_info >= 40 {
-                ticks_since_info = 0;
+            if last_info.elapsed() >= INFO_REFRESH_INTERVAL {
+                last_info = std::time::Instant::now();
                 open.refresh_info();
             }
             let round = open.sync_round();

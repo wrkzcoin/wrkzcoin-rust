@@ -17,7 +17,7 @@ use super::prompt::{confirm, get_daemon_address, get_private_key, get_scan_heigh
 use super::session::{print_transfer_one_line, Session};
 use super::term::{information, success, warning, Terminal};
 use super::ZedConfig;
-use crate::api::{DynDaemon, OpenWallet, SyncLog};
+use crate::api::{DynDaemon, OpenWallet, SyncLog, INFO_REFRESH_INTERVAL};
 use crate::daemon::Daemon;
 use crate::file::{Wallet, WalletError};
 use crate::sync::{SyncConfig, Synchronizer};
@@ -99,12 +99,13 @@ pub fn rebuild_daemon(open: &mut OpenWallet, host: &str, port: u16, ssl: bool) -
 
 /// The synchronizer the command line asks for: `--threads` scanning threads,
 /// the thread count zedwallet++ hands `WalletBackend::openWallet`,
-/// `--skip-coinbase-transactions` and `--sync-windows`.
+/// `--skip-coinbase-transactions`, `--sync-windows` and `--sync-max-blocks`.
 pub fn sync_config(config: &ZedConfig) -> SyncConfig {
     SyncConfig {
         skip_coinbase_transactions: config.skip_coinbase_transactions,
         scan_threads: config.threads.max(1) as usize,
         height_windows: config.sync_windows,
+        max_block_count: config.sync_max_blocks,
         ..SyncConfig::default()
     }
 }
@@ -593,14 +594,13 @@ impl SyncThread {
         let handle = std::thread::spawn(move || {
             // `WalletSynchronizer::start` (`WalletSynchronizer.cpp:773`).
             crate::logging::log(Level::Debug, format_args!("Starting sync process"));
-            let mut ticks_since_info = 0u32;
+            let mut last_info = std::time::Instant::now();
             let mut log = SyncLog::default();
             while !thread_stop.load(Ordering::SeqCst) {
                 let wait = {
                     let mut open = lock(&wallet);
-                    ticks_since_info += 1;
-                    if ticks_since_info >= 40 {
-                        ticks_since_info = 0;
+                    if last_info.elapsed() >= INFO_REFRESH_INTERVAL {
+                        last_info = std::time::Instant::now();
                         open.refresh_info();
                     }
                     let round = open.sync_round();

@@ -137,6 +137,9 @@ pub struct ZedConfig {
     /// `--sync-windows`: the height-window download far below the tip
     /// ([`crate::sync::SyncConfig::height_windows`]).
     pub sync_windows: bool,
+    /// `--sync-max-blocks`: the most blocks one sync request asks for
+    /// ([`crate::sync::SyncConfig::max_block_count`]).
+    pub sync_max_blocks: u64,
 }
 
 impl Default for ZedConfig {
@@ -154,6 +157,7 @@ impl Default for ZedConfig {
             threads: crate::sync::SyncConfig::default().scan_threads as u32,
             skip_coinbase_transactions: false,
             sync_windows: false,
+            sync_max_blocks: crate::sync::SyncConfig::default().max_block_count,
         }
     }
 }

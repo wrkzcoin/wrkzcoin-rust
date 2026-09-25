@@ -228,6 +228,8 @@ pub struct ApiConfig {
     pub skip_coinbase_transactions: bool,
     /// `--sync-windows` ([`crate::sync::SyncConfig::height_windows`]).
     pub sync_windows: bool,
+    /// `--sync-max-blocks` ([`crate::sync::SyncConfig::max_block_count`]).
+    pub sync_max_blocks: u64,
 }
 
 impl Default for ApiConfig {
@@ -250,6 +252,7 @@ impl Default for ApiConfig {
             notify_during_sync: false,
             skip_coinbase_transactions: false,
             sync_windows: false,
+            sync_max_blocks: crate::sync::SyncConfig::default().max_block_count,
         }
     }
 }
@@ -280,6 +283,10 @@ pub struct DynDaemon(pub Arc<dyn WalletDaemon>);
 impl SyncDaemon for DynDaemon {
     fn wallet_sync_data(&self, req: &SyncRequest) -> daemon::Result<WalletSyncData> {
         self.0.wallet_sync_data(req)
+    }
+
+    fn wallet_sync_data_many(&self, reqs: &[SyncRequest]) -> Vec<daemon::Result<WalletSyncData>> {
+        self.0.wallet_sync_data_many(reqs)
     }
 
     fn global_indexes_for_range(&self, start: u64, end: u64) -> daemon::Result<GlobalIndexes> {
@@ -408,6 +415,12 @@ pub struct OpenWallet {
     /// Set when the background sync thread should stop.
     pub stop: Arc<AtomicBool>,
 }
+
+/// How often a background sync loop refreshes `/info`: the ten seconds
+/// `Nigel`'s background thread waits (`WalletSynchronizer.cpp:886`). Measured
+/// on the clock, not in rounds, because a round lasts anything from ten
+/// milliseconds to twenty seconds.
+pub const INFO_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// One save at a time, of whichever copy: [`Wallet::save`] writes
 /// `<file>.tmp` and renames it over the file, so two saves of the same wallet
@@ -710,6 +723,7 @@ impl ApiState {
         let sync = SyncConfig {
             skip_coinbase_transactions: self.config.skip_coinbase_transactions,
             height_windows: self.config.sync_windows,
+            max_block_count: self.config.sync_max_blocks,
             scan_threads: self.config.threads.max(1) as usize,
             ..SyncConfig::default()
         };

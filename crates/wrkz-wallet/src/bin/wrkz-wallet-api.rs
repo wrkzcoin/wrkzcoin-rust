@@ -11,7 +11,7 @@
 //!                 [--rpc-ipc-path /run/wrkz/wallet-api.sock]
 //!                 [--enable-cors '*'] [--log-level 3] [--log-file api.log]
 //!                 [--no-console] [--threads 4] [--skip-coinbase-transactions]
-//!                 [--sync-windows]
+//!                 [--sync-windows] [--sync-max-blocks 1000]
 //! ```
 //!
 //! Every route and every response body lives in [`wrkz_wallet::api`]; this
@@ -61,9 +61,13 @@ Core:
                                     faster, but block rewards paid to the wallet are not seen
       --threads #                   Specify number of wallet sync threads (default: one per core, at most 16)
       --sync-windows                Far below the tip, ask the daemon for four height windows a round
-                                    instead of one. Fewer round trips on a long first sync; needs a
-                                    daemon that offers the `heightRange` sync feature
-  -v, --version                     Output software version information
+                                    instead of one. Fewer round trips on a long first sync; needs
+                                    --skip-coinbase-transactions and a daemon that offers the
+                                    `heightRange` and `skipEmptyBlocks` sync features
+      --sync-max-blocks #           Most blocks to ask the daemon for in one request (default: 1000, at
+                                    most 10000). Above 1000 helps only with a daemon started with a
+                                    higher --rpc-max-block-count
+  -v, --version                    Output software version information
 
 Network:
   -p, --port <port>                 The port to listen on for http requests (default: 7856)
@@ -148,6 +152,10 @@ fn parse_arguments<I: Iterator<Item = String>>(args: I) -> Parsed {
                     Err(e) => return Parsed::Error(e),
                 }
             }
+            "--sync-max-blocks" => match value(&name).and_then(|v| wrkz_wallet::sync::parse_sync_max_blocks(&v)) {
+                Ok(blocks) => config.sync_max_blocks = blocks,
+                Err(e) => return Parsed::Error(e),
+            },
             "-p" | "--port" => {
                 match value(&name).and_then(|v| v.parse::<u16>().map_err(|_| format!("{v} is not a port"))) {
                     Ok(port) => config.port = port,
@@ -484,6 +492,17 @@ mod tests {
 
         let Parsed::Run(config) = parse(&["-r", "x", "--sync-windows"]) else { panic!("should parse") };
         assert!(config.sync_windows);
+    }
+
+    #[test]
+    fn the_sync_batch_ceiling_is_the_default_unless_asked_for() {
+        let Parsed::Run(config) = parse(&["-r", "x"]) else { panic!("should parse") };
+        assert_eq!(config.sync_max_blocks, 1000);
+
+        let Parsed::Run(config) = parse(&["-r", "x", "--sync-max-blocks=2500"]) else { panic!("should parse") };
+        assert_eq!(config.sync_max_blocks, 2500);
+
+        assert!(matches!(parse(&["-r", "x", "--sync-max-blocks", "0"]), Parsed::Error(e) if e.contains("1 to 10000")));
     }
 
     #[test]
