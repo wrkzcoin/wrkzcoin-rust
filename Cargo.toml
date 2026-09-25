@@ -21,7 +21,7 @@ members = [
 exclude = ["apps/pluton"]
 
 [workspace.package]
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 # As the C++ WrkzCoin: GPL-3.0 or later, with the CryptoNote, Bytecoin, Monero
 # and TurtleCoin notices LICENSE carries.

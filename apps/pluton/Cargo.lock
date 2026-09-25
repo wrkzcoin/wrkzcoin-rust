@@ -4447,7 +4447,7 @@ dependencies = [
 
 [[package]]
 name = "rust-pluton-wallet"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "console_error_panic_hook",
  "dirs",
@@ -6307,7 +6307,7 @@ checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
 name = "wrkz-pow"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "argon2",
  "getrandom 0.3.4",
@@ -6320,14 +6320,14 @@ dependencies = [
 
 [[package]]
 name = "wrkz-pow-ref"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "cc",
 ]
 
 [[package]]
 name = "wrkz-primitives"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "hex",
  "wrkz-pow",
@@ -6335,7 +6335,7 @@ dependencies = [
 
 [[package]]
 name = "wrkz-wallet"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "aes",
  "cbc",
