@@ -328,7 +328,9 @@ fn main() -> ExitCode {
         }
     };
 
-    println!("Want documentation on how to use the wallet-api?\nSee https://turtlecoin.github.io/wallet-api-docs/\n");
+    // `WalletApi.cpp:68-69` points at TurtleCoin's wallet-api docs; this
+    // program's own page lists the routes and where they differ.
+    println!("Want documentation on how to use the wallet-api?\nSee https://docs-rust.wrkz.work/wallets/wallet-api/\n");
     println!("The api has been launched on {address}.");
 
     // `WalletApi.cpp:75-89`, told from what actually bound.
