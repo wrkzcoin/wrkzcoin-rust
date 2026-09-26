@@ -29,6 +29,7 @@ The C++ documentation is at <https://docs.wrkz.work/>.
 | `wrkz-db-inspect` | — | Reads a C++ database and checks its headers, proofs of work and ring signatures |
 | `wrkz-p2p-probe` | — | Dials one peer, handshakes and downloads a few blocks: can this machine reach the network at all |
 | `wrkz-rpc-diff` | — | Puts the same requests to two daemons and compares the answers |
+| `wrkz-simnet` | — | A private test network: a cluster of simnet nodes in one process, or a miner for `wrkz-node --simnet` |
 | `wrkz-wallet-sync`, `wrkz-wallet-send` | — | Sync an address, or build one transaction by hand, to compare with the C++ wallet |
 
 `wrkz-replay`, `wrkz-verify-state` and `wrkz-db-inspect` need the `rocksdb`
@@ -49,10 +50,12 @@ step 5 of [`spec/12-roadmap.md`](spec/12-roadmap.md).
 | `crates/wrkz-mempool` | The transaction pool and block templates, byte-comparable with the C++ daemon's `getblocktemplate` | 06, 07, 09 |
 | `crates/wrkz-p2p` | Levin framing, handshake, timed sync, ping, every block and transaction notification, and `wrkz-p2p-probe` — the connectivity diagnostic that needs no data directory and no state: it dials any peer, handshakes, downloads a few blocks and exits non-zero if it cannot, which is how an operator answers "can this box reach the network at all" before there is a node to ask | 08 |
 | `crates/wrkz-node` | The daemon: peer manager, white and gray lists, back ping, the block sync state machine, batched commits, the console, and the C++ configuration file and option names | 08, 09 |
-| `crates/wrkz-rpc` | The daemon HTTP and JSON-RPC surface, gzip, the wallet sync cache and `/metrics`; the logger, the IPC listener and the `--*-notify` hook runner the daemon and the wallet programs share; `wrkz-rpc-diff` | 09 |
+| `crates/wrkz-rpc` | The daemon HTTP and JSON-RPC surface, gzip, the wallet sync cache, `/metrics` and the `/ws` event stream; the logger, the IPC listener and the `--*-notify` hook runner the daemon and the wallet programs share; `wrkz-rpc-diff` | 09 |
 | `crates/wrkz-wallet` | Wallet file format, the daemon client, synchronization, balances, transaction construction, and the `wrkz-wallet`, `wrkz-wallet-api`, `wrkz-wallet-sync` and `wrkz-wallet-send` programs | 03, 09, 10 |
 | `crates/wrkz-service` | `wrkz-service`: the JSON-RPC wallet service of `src/walletservice`, method for method, over the modern container | 09, 10 |
 | `crates/wrkz-txpow-server` | `wrkz-txpow-server`: computes the transaction proof of work for wallets that would rather not — phones and browsers | 06 |
+| `crates/wrkz-ws` | WebSocket framing and handshake (RFC 6455), std only: the daemon's `/ws` and the wallets that follow it | — |
+| `crates/wrkz-simnet` | The simnet: whole nodes in one process, joined by links a test can cut and heal, a miner that needs no proof of work, and `wrkz-simnet` | — |
 | `apps/pluton` | Rust Pluton Wallet: the wallet with a window, for Windows, macOS, Linux, Android and the browser, on `wrkz-wallet`. Its own workspace, so nothing here pulls in a GUI toolkit | 09, 10 |
 
 `fuzz/` holds libFuzzer targets for the parsers that read bytes this node did

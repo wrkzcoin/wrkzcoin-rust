@@ -23,7 +23,7 @@
 //! (`PaymentServiceJsonRpcServer.cpp:186`).
 
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -31,6 +31,7 @@ use std::time::Duration;
 use wrkz_rpc::http::{self, HttpLimits, Request, Response};
 use wrkz_wallet::api::{SyncLog, INFO_REFRESH_INTERVAL};
 use wrkz_wallet::listen::{Handler, IpcConfig, ListenConfig, Listener, Peer};
+use wrkz_wallet::tip_watch::TipWatch;
 
 use crate::ServiceState;
 
@@ -151,34 +152,30 @@ pub fn start(state: Arc<ServiceState>, config: ServeConfig) -> std::io::Result<R
 /// One round of syncing per pass, then whatever wait the step asked for. The
 /// lock is taken and released per step, so a request never waits on more than
 /// one daemon round trip.
+///
+/// The wait ends early when the daemon's event stream reports a block or a
+/// pool change ([`TipWatch`]); while that stream is live, a synced wallet
+/// polls every thirty seconds instead of every two.
 fn sync_loop(state: &Arc<ServiceState>) {
     let mut last_info = std::time::Instant::now();
     let mut log = SyncLog::default();
+    let watch = TipWatch::start();
+    let mut woke = false;
     while !state.stopping.load(Ordering::SeqCst) {
-        let wait = {
+        let (wait, seen) = {
             let mut open = state.write();
-            if last_info.elapsed() >= INFO_REFRESH_INTERVAL {
+            open.follow_daemon(&watch);
+            if woke || last_info.elapsed() >= INFO_REFRESH_INTERVAL {
                 last_info = std::time::Instant::now();
                 open.refresh_info();
             }
+            let seen = watch.events();
             let round = open.sync_round();
             log.record(&round, &open);
             state.notify.sync_step(&open);
-            round.wait
+            (watch.pace(&round.step, round.wait), seen)
         };
-        sleep_unless_stopping(wait.max(Duration::from_millis(10)), &state.stopping);
-    }
-}
-
-/// Sleep for `wait`, waking early when the service is told to stop.
-fn sleep_unless_stopping(wait: Duration, stopping: &AtomicBool) {
-    let deadline = std::time::Instant::now() + wait;
-    while !stopping.load(Ordering::SeqCst) {
-        let left = deadline.saturating_duration_since(std::time::Instant::now());
-        if left.is_zero() {
-            return;
-        }
-        std::thread::sleep(left.min(Duration::from_millis(100)));
+        woke = watch.wait(wait.max(Duration::from_millis(10)), seen, &state.stopping);
     }
 }
 

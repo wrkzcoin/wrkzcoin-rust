@@ -16,12 +16,12 @@ publish.workspace = true
 # the seed nodes need (spec/09).
 default = ["https", "frontends"]
 # Allow https:// daemon URLs by compiling ureq's rustls backend.
-https = ["native", "ureq/tls"]
+https = ["native", "ureq/tls", "dep:rustls", "dep:webpki-roots"]
 # The blocking HTTP daemon client (`daemon::Daemon`). The wallet core - file,
 # sync, transfer, crypto - does not need it: it reaches the daemon through the
 # `SyncDaemon` and `TransferDaemon` traits, which the browser build of Rust
 # Pluton Wallet (apps/pluton) implements with XMLHttpRequest instead.
-native = ["dep:ureq"]
+native = ["dep:ureq", "dep:wrkz-ws"]
 # The programs (`wrkz-wallet`, `wrkz-wallet-api`, `wrkz-wallet-sync`,
 # `wrkz-wallet-send`) and the `api`, `cli` and `ipc` modules they are built
 # from. `--no-default-features` leaves the core alone, which is what builds
@@ -60,6 +60,12 @@ serde_json = { workspace = true }
 # is hex and JSON, several times smaller compressed. `MAX_RESPONSE_BYTES`
 # bounds the decompressed stream, so a gzip bomb stops at the same cap.
 ureq = { workspace = true, features = ["json", "gzip"], optional = true }
+# `tip_watch`: the daemon's `GET /ws` event stream, framing and handshake.
+wrkz-ws = { workspace = true, optional = true }
+# `tip_watch` over `wss://`: the TLS stack and the root certificates ureq's
+# `tls` feature already brings, at the same versions, so nothing new is built.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
+webpki-roots = { version = "0.26", optional = true }
 zstd = { workspace = true, optional = true }
 
 # In a browser: the clock (`platform::now_seconds`) and the CSPRNG
@@ -83,6 +89,10 @@ required-features = ["frontends"]
 [[bin]]
 name = "wrkz-wallet-send"
 required-features = ["frontends"]
+
+[[test]]
+name = "tip_watch"
+required-features = ["native"]
 
 [[test]]
 name = "api"

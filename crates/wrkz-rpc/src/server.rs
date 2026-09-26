@@ -42,6 +42,7 @@ use crate::handlers;
 use crate::http::{self, DeadlineStream, HttpError, HttpLimits, ReadTimeout, Request, Response};
 use crate::jsonrpc;
 use crate::sync_cache::SyncCache;
+use crate::ws::{self, Refusal, Reservation, Topics, WsHub, WsStream};
 use std::collections::HashMap;
 use std::io::{BufReader, Read, Write};
 use std::net::{IpAddr, Shutdown, SocketAddr, SocketAddrV6, TcpListener, TcpStream};
@@ -235,6 +236,9 @@ pub struct Context {
     /// The daemon's console, once it has installed one, for `POST /console`
     /// on the IPC socket ([`crate::console`]).
     pub console: ConsoleSlot,
+    /// `GET /ws` ([`crate::ws`]), when the daemon was started with
+    /// `--enable-websocket`. `None` leaves `/ws` the 404 of any unrouted path.
+    pub ws: Option<WsHub>,
 }
 
 impl Context {
@@ -247,6 +251,7 @@ impl Context {
             sync_cache,
             counters: crate::metrics::Counters::default(),
             console: ConsoleSlot::default(),
+            ws: None,
         }
     }
 
@@ -587,6 +592,69 @@ fn dispatch_routed(ctx: &Context, req: &Request, peer: &str) -> Response {
 }
 
 // ---------------------------------------------------------------------------
+// GET /ws
+// ---------------------------------------------------------------------------
+
+/// What a `GET /ws` came to.
+enum Upgrade {
+    /// An answer to write before closing: the request was refused.
+    Refused(Response),
+    /// A place is held; write `answer` (the `101`) and hand the connection to
+    /// the hub.
+    Accepted { reservation: Reservation, topics: Topics, hello: String, answer: String },
+}
+
+/// Check a `GET /ws` in the middleware's order — body cap, access token, rate
+/// limit ([`gate_transport`]) — then the handshake (RFC 6455 §4.2.1), the
+/// origin, the topics, and a place in the hub.
+fn websocket_upgrade(ctx: &Context, hub: &WsHub, req: &Request, peer: &str) -> Upgrade {
+    if let Some(early) = gate_transport(ctx, req, peer) {
+        return Upgrade::Refused(early);
+    }
+    let key = match wrkz_ws::handshake::check_request(&req.method, |name| req.header(name)) {
+        Ok(key) => key.to_string(),
+        // §4.4: a version we do not speak is a 426 naming the one we do; so
+        // is a request that did not ask to upgrade at all.
+        Err(e @ (wrkz_ws::HandshakeError::BadVersion | wrkz_ws::HandshakeError::NoUpgrade)) => {
+            let mut res = handlers::fail_request(426, &format!("WebSocket upgrade required: {e}"));
+            res.set_header("Sec-WebSocket-Version", wrkz_ws::handshake::VERSION);
+            return Upgrade::Refused(res);
+        }
+        Err(e) => return Upgrade::Refused(handlers::fail_request(400, &format!("Bad WebSocket upgrade: {e}"))),
+    };
+    // A browser page may subscribe only where it may call the RPC: the same
+    // `--enable-cors` decides both. A program sends no `Origin`.
+    if let Some(origin) = req.header("Origin") {
+        let allowed = ctx.config.cors_header.as_str();
+        if !(allowed == "*" || (!allowed.is_empty() && allowed == origin)) {
+            return Upgrade::Refused(handlers::fail_request(
+                403,
+                "This origin may not subscribe; the daemon's --enable-cors does not allow it",
+            ));
+        }
+    }
+    let topics = match Topics::from_query(&req.query) {
+        Ok(topics) => topics,
+        Err(e) => return Upgrade::Refused(handlers::fail_request(400, &e)),
+    };
+    let ipc = peer == crate::ipc::IPC_PEER;
+    let ip = if ipc { peer.to_string() } else { client_ip(ctx, req, peer) };
+    let reservation = match hub.reserve(&ip, ipc || is_loopback_ip(&ip)) {
+        Ok(reservation) => reservation,
+        Err(Refusal::TooManyFromAddress) => {
+            return Upgrade::Refused(handlers::fail_request(429, "Too many WebSocket subscriptions from this address"))
+        }
+        Err(Refusal::Full) | Err(Refusal::Stopping) => {
+            return Upgrade::Refused(handlers::fail_request(503, "WebSocket subscriptions are full, retry later"))
+        }
+    };
+    let top = ctx.api.top_index();
+    let hash = ctx.api.block_hash_by_index(top).ok().flatten().unwrap_or([0; 32]);
+    let hello = ws::hello(top, &hash, &topics);
+    Upgrade::Accepted { reservation, topics, hello, answer: wrkz_ws::handshake::response(&key) }
+}
+
+// ---------------------------------------------------------------------------
 // the listener
 // ---------------------------------------------------------------------------
 
@@ -697,6 +765,48 @@ impl Write for Conn {
             #[cfg(unix)]
             Conn::Unix(s) => s.flush(),
         }
+    }
+}
+
+impl WsStream for Conn {
+    fn read_shared(&self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Conn::Tcp(s) => (&*s).read(buf),
+            #[cfg(unix)]
+            Conn::Unix(s) => (&*s).read(buf),
+        }
+    }
+
+    fn write_shared(&self, buf: &[u8]) -> std::io::Result<usize> {
+        match self {
+            Conn::Tcp(s) => (&*s).write(buf),
+            #[cfg(unix)]
+            Conn::Unix(s) => (&*s).write(buf),
+        }
+    }
+
+    fn shutdown_stream(&self) {
+        self.shutdown();
+    }
+
+    fn shutdown_write(&self) {
+        match self {
+            Conn::Tcp(s) => {
+                let _ = s.shutdown(Shutdown::Write);
+            }
+            #[cfg(unix)]
+            Conn::Unix(s) => {
+                let _ = s.shutdown(Shutdown::Write);
+            }
+        }
+    }
+
+    fn set_read_timeout_stream(&self, timeout: Option<Duration>) -> std::io::Result<()> {
+        ReadTimeout::set_read_timeout(self, timeout)
+    }
+
+    fn set_write_timeout_stream(&self, timeout: Option<Duration>) -> std::io::Result<()> {
+        self.set_write_timeout(timeout)
     }
 }
 
@@ -875,6 +985,8 @@ pub struct RunningServer {
     ipc_error: Option<String>,
     /// The workers' [`Context::console`].
     console: ConsoleSlot,
+    /// `GET /ws`'s subscribers, told goodbye on stop.
+    ws: Option<WsHub>,
 }
 
 impl RunningServer {
@@ -929,6 +1041,9 @@ impl RunningServer {
         self.queue.close();
         for t in self.threads.drain(..) {
             let _ = t.join();
+        }
+        if let Some(hub) = &self.ws {
+            hub.stop();
         }
         // Nothing else removes the socket file, and a leftover one would stand
         // in the next start's way.
@@ -1029,6 +1144,15 @@ fn spawn_ipc_acceptor(
 /// the same way (`set_ipv6_v6only(true)`, `RpcServer.cpp:139`). It serves the
 /// same routes from the same worker pool.
 pub fn start(api: Arc<dyn NodeApi>, config: ServerConfig) -> std::io::Result<RunningServer> {
+    start_with(api, config, None)
+}
+
+/// [`start`], serving `GET /ws` from `ws` as well when it is given
+/// (`--enable-websocket`). The hub is made by the caller because the chain
+/// and the pool must publish to it ([`WsHub::listener`]) before the server
+/// exists; the server only takes connections over to it, and stops it on
+/// [`RunningServer::stop`].
+pub fn start_with(api: Arc<dyn NodeApi>, config: ServerConfig, ws: Option<WsHub>) -> std::io::Result<RunningServer> {
     let listener = TcpListener::bind(&config.bind)?;
     let addr = listener.local_addr()?;
     let listener6 = match config.bind_ipv6.as_str() {
@@ -1053,7 +1177,7 @@ pub fn start(api: Arc<dyn NodeApi>, config: ServerConfig) -> std::io::Result<Run
     let workers = config.workers.max(1);
     let queue = Arc::new(Queue::new(config.queue_capacity.max(1)));
     let admission = Arc::new(Admission::new(&config));
-    let ctx = Arc::new(Context::new(api, config));
+    let ctx = Arc::new(Context { ws: ws.clone(), ..Context::new(api, config) });
     let console = ctx.console.clone();
     let stopping = Arc::new(AtomicBool::new(false));
     let mut threads = Vec::with_capacity(workers + 2);
@@ -1086,14 +1210,15 @@ pub fn start(api: Arc<dyn NodeApi>, config: ServerConfig) -> std::io::Result<Run
     #[cfg(not(unix))]
     let ipc = None;
 
-    Ok(RunningServer { addr, addr6, stopping, queue, threads, ipc, ipc_error, console })
+    Ok(RunningServer { addr, addr6, stopping, queue, threads, ipc, ipc_error, console, ws })
 }
 
 /// One connection: read requests until the peer stops, the limits say no, or
 /// keep-alive runs out.
 fn serve_connection(ctx: &Arc<Context>, accepted: Accepted) {
-    // `_held` keeps the address's connection slot until this returns.
-    let Accepted { conn: stream, slot: _held } = accepted;
+    // `held` keeps the address's connection slot until this returns — or, for
+    // a WebSocket, until the hub closes the connection.
+    let Accepted { conn: stream, slot: held } = accepted;
     let cfg = &ctx.config;
     let peer = stream.peer();
     stream.set_nodelay();
@@ -1132,6 +1257,35 @@ fn serve_connection(ctx: &Arc<Context>, accepted: Accepted) {
                 return;
             }
         };
+
+        if request.path == "/ws" {
+            if let Some(hub) = &ctx.ws {
+                match websocket_upgrade(ctx, hub, &request, &peer) {
+                    Upgrade::Refused(mut res) => {
+                        if !cfg.cors_header.is_empty() {
+                            res.set_header("Access-Control-Allow-Origin", &cfg.cors_header);
+                        }
+                        ctx.counters.record(res.status, false);
+                        let _ = write_one(&mut writer, &res, false, &keep_alive_hint);
+                    }
+                    Upgrade::Accepted { reservation, topics, hello, answer } => {
+                        ctx.counters.record(101, false);
+                        // A client may send no frame before our `101` (RFC 6455
+                        // §4.1), so bytes already buffered past its request are
+                        // a broken client, not a frame to keep.
+                        if !reader.buffer().is_empty() {
+                            return;
+                        }
+                        if writer.write_all(answer.as_bytes()).and_then(|()| writer.flush()).is_err() {
+                            return;
+                        }
+                        drop(reader);
+                        hub.admit(reservation, Box::new(writer), topics, &hello, Box::new(held));
+                    }
+                }
+                return;
+            }
+        }
 
         let mut res = dispatch(ctx, &request, &peer);
         // After the handler, as `cpp-httplib` does it: compression is a

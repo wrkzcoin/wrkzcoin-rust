@@ -60,7 +60,6 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use wrkz_primitives::Hash;
 use wrkz_rpc::events::{ChainEvent, EventListener};
 
 use crate::{log_debug, log_info, log_warn};
@@ -150,40 +149,9 @@ pub fn is_non_loopback_tcp(endpoint: &str) -> bool {
 }
 
 /// The JSON bodies an event is published as, with their topics
-/// (`ZmqPublisher::publishMessage`).
-pub fn messages(event: &ChainEvent) -> Vec<(&'static str, String)> {
-    match event {
-        ChainEvent::BlockAdded { index, hash, transaction_hashes } => vec![
-            ("hashblock", format!("{{\"height\":{index},\"hash\":\"{}\"}}", hex::encode(hash))),
-            (
-                "chain_main",
-                format!(
-                    "{{\"height\":{index},\"hash\":\"{}\",\"transaction_hashes\":{}}}",
-                    hex::encode(hash),
-                    hash_array(transaction_hashes)
-                ),
-            ),
-        ],
-        ChainEvent::AlternativeBlockAdded { index, hash } => {
-            vec![("hashblock_alt", format!("{{\"height\":{index},\"hash\":\"{}\"}}", hex::encode(hash)))]
-        }
-        ChainEvent::ChainSwitched { common_root_index, hashes } => vec![(
-            "chainswitch",
-            format!("{{\"common_root_height\":{common_root_index},\"hashes\":{}}}", hash_array(hashes)),
-        )],
-        ChainEvent::PoolAdded { hash } => {
-            vec![("txpool_add", format!("{{\"hashes\":[\"{}\"]}}", hex::encode(hash)))]
-        }
-        ChainEvent::PoolRemoved { hashes, reason } => {
-            vec![("txpool_del", format!("{{\"hashes\":{},\"reason\":\"{}\"}}", hash_array(hashes), reason.as_str()))]
-        }
-    }
-}
-
-fn hash_array(hashes: &[Hash]) -> String {
-    let quoted: Vec<String> = hashes.iter().map(|h| format!("\"{}\"", hex::encode(h))).collect();
-    format!("[{}]", quoted.join(","))
-}
+/// (`ZmqPublisher::publishMessage`). The daemon's WebSocket stream sends the
+/// same pairs, so the builder lives with the events it describes.
+pub use wrkz_rpc::events::topic_messages as messages;
 
 // -- ZMTP -------------------------------------------------------------------
 

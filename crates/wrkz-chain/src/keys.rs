@@ -134,6 +134,14 @@ pub const TAG_LITE_SNAPSHOT_IMPORTING: &str = "lite-snapshot-importing";
 /// later run can conjure them, so the C++ calls the choice "Permanent for this
 /// database" (`DaemonConfiguration.cpp:105`). Absent means a full database.
 pub const META_LITE_HEIGHT: &str = "lite_height";
+/// `W M network` → [`NETWORK_SIMNET`] in a simnet's database, and absent in
+/// every mainnet one. Written the first time an empty state is opened as a
+/// simnet and never changed: a simnet's blocks carry no proof of work, so its
+/// state must never be served as mainnet's, nor the reverse
+/// (`Config::simnet`).
+pub const META_NETWORK: &str = "network";
+/// The value of [`META_NETWORK`] for a simnet.
+pub const NETWORK_SIMNET: &[u8] = b"simnet";
 /// `W M prune_depth` → the retention depth a pruned node was last opened with
 /// (le32), for reporting. Unlike [`META_LITE_HEIGHT`] this is *not* a promise:
 /// raising the depth cannot bring back a body that was already deleted, so what

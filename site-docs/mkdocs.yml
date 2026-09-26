@@ -129,6 +129,7 @@ nav:
       - The Database: node/database.md
       - Mining: node/mining.md
       - ZMQ and Notify Hooks: node/zmq-and-hooks.md
+      - WebSocket Events: node/websocket.md
       - systemd: node/systemd.md
       - Checking a Node: node/checking.md
       - Internals and Differences: node/internals.md
@@ -143,6 +144,7 @@ nav:
       - Replay and Consensus Checks: tools/replay.md
       - Verifying a Chain State: tools/verify-state.md
       - Diagnostics: tools/diagnostics.md
+      - Simnet: tools/simnet.md
   - Building:
       - Cross-compiling: building/cross-compile.md
       - Docker: building/docker.md

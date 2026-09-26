@@ -20,6 +20,9 @@
 //! - [`txpow`] — the client for an external transaction proof-of-work server.
 //! - [`http`] — the daemon and that server over a pluggable HTTP transport, the
 //!   path Rust Pluton Wallet takes on every platform.
+//! - [`tip_watch`] — the daemon's `GET /ws` event stream, which wakes a synced
+//!   wallet when a block arrives instead of it polling every two seconds
+//!   (`native`: a browser follows the stream from its own script).
 //!
 //! `api`, `cli`, `ipc`, `listen` and `logging` need the `frontends` feature
 //! and the HTTP client in [`daemon`] needs `native`; both are on by default.
@@ -42,5 +45,7 @@ pub mod listen;
 pub mod logging;
 pub mod platform;
 pub mod sync;
+#[cfg(feature = "native")]
+pub mod tip_watch;
 pub mod transfer;
 pub mod txpow;

@@ -126,6 +126,9 @@ pub struct NodeConfig {
     pub hide_my_port: bool,
     /// `--p2p-reset-peerstate`.
     pub reset_peer_state: bool,
+    /// The `network_id` sent in every handshake and required of every peer:
+    /// mainnet's `CRYPTONOTE_NETWORK`, or `SIMNET_NETWORK` for `--simnet`.
+    pub network_id: [u8; 16],
     /// Stop once the chain reaches this height (block index).
     pub sync_to: Option<u32>,
     /// Stop once a peer reports we are at its top.
@@ -196,6 +199,7 @@ impl Default for NodeConfig {
             allow_local_ip: false,
             hide_my_port: false,
             reset_peer_state: false,
+            network_id: CRYPTONOTE_NETWORK,
             sync_to: None,
             exit_when_synced: false,
             pruned_depth: None,
@@ -1044,7 +1048,7 @@ impl<S: KvStore, P: TxPool> Node<S, P> {
             // listener never came up.
             self.listen_addr.or(self.listen_addr6).map(|a| a.port()).unwrap_or(self.cfg.p2p_port) as u32
         };
-        BasicNodeData::ours(self.pm.peer_id(), my_port)
+        BasicNodeData { network_id: self.cfg.network_id, ..BasicNodeData::ours(self.pm.peer_id(), my_port) }
     }
 
     /// `get_payload_sync_data` (`CryptoNoteProtocolHandler.cpp:614`).
@@ -1897,7 +1901,7 @@ impl<S: KvStore, P: TxPool> Node<S, P> {
         let (node, sync) = msg::parse_handshake_request(payload).map_err(malformed("bad handshake"))?;
         // A node of another network, or an old one, is lost rather than
         // misbehaving: closed, not scored.
-        if node.network_id != CRYPTONOTE_NETWORK {
+        if node.network_id != self.cfg.network_id {
             return Err("wrong network id".into());
         }
         if node.version < P2P_MINIMUM_VERSION {
@@ -2404,9 +2408,13 @@ impl<S: KvStore, P: TxPool> Node<S, P> {
         let (wanted, threads) = {
             let chain = self.chain_read();
             let checkpoints = chain.checkpoints();
+            // A simnet checks no proof of work, so there is nothing to pre-hash.
+            let simnet = chain.is_simnet();
             let wanted: Vec<Option<&BlockTemplate>> = blocks
                 .iter()
-                .map(|(_, t, _)| t.coinbase_height().filter(|h| !checkpoints.is_in_checkpoint_zone(*h)).map(|_| t))
+                .map(|(_, t, _)| {
+                    t.coinbase_height().filter(|h| !simnet && !checkpoints.is_in_checkpoint_zone(*h)).map(|_| t)
+                })
                 .collect();
             (wanted, chain.config().validate_threads)
         };

@@ -123,6 +123,18 @@ pub struct Config {
     /// while it syncs usually wants fewer** — every thread here is a core not
     /// answering a request — so set it to a fraction of the cores there.
     pub validate_threads: usize,
+    /// **Simnet only** (`wrkz-node --simnet`): accept blocks without proof of
+    /// work, and give every block difficulty
+    /// [`wrkz_primitives::constants::SIMNET_DIFFICULTY`], so a test network
+    /// mines as fast as it is asked to. Every other rule of every height is the
+    /// mainnet's, unchanged.
+    ///
+    /// Never on for mainnet. The choice is recorded in the database the first
+    /// time an empty state is opened with it ([`keys::META_NETWORK`]) and is
+    /// then **permanent for that database** in both directions:
+    /// [`ChainState::open`] refuses a simnet state opened without this flag,
+    /// and a non-empty mainnet state opened with it.
+    pub simnet: bool,
 }
 
 impl Default for Config {
@@ -134,6 +146,7 @@ impl Default for Config {
             unwind_history: 512,
             recent_window: 256,
             validate_threads: wrkz_pow::parallel::default_threads(),
+            simnet: false,
         }
     }
 }
@@ -777,6 +790,7 @@ impl<S: KvStore> ChainState<S> {
             None => None,
         };
         chain.settle_lite_height()?;
+        chain.settle_network()?;
         chain.transactions_floor = chain.read_transactions_floor()?;
         if let Some(depth) = chain.cfg.prune_depth {
             chain.store.put(keys::meta(keys::META_PRUNE_DEPTH), depth.to_le_bytes().to_vec())?;
@@ -829,6 +843,52 @@ impl<S: KvStore> ChainState<S> {
                  can write them now. Pass --lite-height {r}, not {a}."
             ))),
         }
+    }
+
+    /// Record that this database is a simnet's, or refuse an open that would
+    /// mix the two networks ([`Config::simnet`]).
+    ///
+    /// | recorded | asked for | outcome |
+    /// | --- | --- | --- |
+    /// | none | mainnet | opened: every mainnet database has no record |
+    /// | none | simnet, empty state | adopted: the record is written |
+    /// | none | simnet, non-empty state | refused: that chain is mainnet's |
+    /// | simnet | simnet | opened |
+    /// | simnet | mainnet | refused |
+    fn settle_network(&mut self) -> Result<()> {
+        let recorded = self.store_get(&keys::meta(keys::META_NETWORK))?;
+        let recorded_simnet = match recorded.as_deref() {
+            None => false,
+            Some(v) if v == keys::NETWORK_SIMNET => true,
+            Some(v) => {
+                return Err(ChainError::Corrupt(format!(
+                    "this database records a network this build does not know ({:?})",
+                    String::from_utf8_lossy(v)
+                )))
+            }
+        };
+        match (recorded_simnet, self.cfg.simnet) {
+            (false, false) | (true, true) => Ok(()),
+            (false, true) if self.tip.is_none() => {
+                self.store.put(keys::meta(keys::META_NETWORK), keys::NETWORK_SIMNET.to_vec())?;
+                Ok(())
+            }
+            (false, true) => Err(ChainError::Corrupt(
+                "this database holds a mainnet chain and cannot be opened as a simnet. Start the simnet in an \
+                 empty --data-dir."
+                    .into(),
+            )),
+            (true, false) => Err(ChainError::Corrupt(
+                "this database belongs to a simnet, whose blocks carry no proof of work; it can never be \
+                 opened as mainnet. Pass --simnet, or point --data-dir at a mainnet database."
+                    .into(),
+            )),
+        }
+    }
+
+    /// Whether this database is a simnet's ([`Config::simnet`]).
+    pub fn is_simnet(&self) -> bool {
+        self.cfg.simnet
     }
 
     /// The lite height recorded in this database, if it was created as a lite
@@ -1672,6 +1732,9 @@ impl<S: KvStore> ChainState<S> {
     /// implementation, [`difficulty_window_indexes`] and
     /// [`difficulty_for_next_block_from`].
     pub fn difficulty_for_next_block(&self, view: &ChainView<'_>, parent_index: u32) -> Result<Option<u64>> {
+        if self.cfg.simnet {
+            return Ok(Some(wrkz_primitives::constants::SIMNET_DIFFICULTY));
+        }
         let mut window = Vec::new();
         for i in difficulty_window_indexes(parent_index) {
             window.push(
@@ -1884,6 +1947,10 @@ impl<S: KvStore> ChainState<S> {
     /// Step 10's proof-of-work test, from the [`PowHint`] the caller handed in
     /// when it is this block's, and from a fresh hash otherwise.
     fn proof_of_work_passes(&self, block: &BlockTemplate, hash: &Hash, difficulty: u64) -> Result<bool> {
+        // A simnet's blocks carry no work ([`Config::simnet`]).
+        if self.cfg.simnet {
+            return Ok(true);
+        }
         let passes = match self.pow_hint.filter(|h| h.block_hash == *hash) {
             Some(hint) => block.check_proof_of_work_with(&hint.pow_hash, difficulty),
             None => block.check_proof_of_work(difficulty),

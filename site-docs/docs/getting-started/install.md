@@ -64,6 +64,7 @@ Unpacking an archive gives one directory with the archive's name, holding the pr
 | `wrkz-wallet-api` | The wallet's HTTP API |
 | `wrkz-service` | The JSON-RPC wallet service |
 | `wrkz-txpow-server` | Computes the transaction proof of work for phones and browsers |
+| `wrkz-simnet` | A private test network for trying a wallet or an integration ([Simnet](../tools/simnet.md)) |
 | `wrkz-replay` | Imports a C++ node's database, validating every block ([Replay](../tools/replay.md)) |
 | `wrkz-verify-state` | Checks a chain state someone else built ([Verifying a chain state](../tools/verify-state.md)) |
 | `wrkz-db-inspect` | Checks a C++ database's headers, proofs of work and ring signatures |

@@ -24,6 +24,9 @@ wrkz-node = { path = "../crates/wrkz-node" }
 # The wallet container's JSON schema. No front ends and no HTTP client: the
 # file format is the whole of what is fuzzed here.
 wrkz-wallet = { path = "../crates/wrkz-wallet", default-features = false }
+# The WebSocket framing of the daemon's `GET /ws` and of every wallet that
+# follows it.
+wrkz-ws = { path = "../crates/wrkz-ws" }
 
 # Each target is a separate binary; `cargo fuzz list` enumerates them.
 [[bin]]
@@ -106,6 +109,13 @@ bench = false
 [[bin]]
 name = "lite_snapshot"
 path = "fuzz_targets/lite_snapshot.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ws_frame"
+path = "fuzz_targets/ws_frame.rs"
 test = false
 doc = false
 bench = false

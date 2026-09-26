@@ -21,6 +21,7 @@ use crate::api::{DynDaemon, OpenWallet, SyncLog, INFO_REFRESH_INTERVAL};
 use crate::daemon::Daemon;
 use crate::file::{Wallet, WalletError};
 use crate::sync::{SyncConfig, Synchronizer};
+use crate::tip_watch::TipWatch;
 use wrkz_rpc::log::Level;
 
 /// The wallet as the interface holds it: shared with the sync thread.
@@ -596,27 +597,26 @@ impl SyncThread {
             crate::logging::log(Level::Debug, format_args!("Starting sync process"));
             let mut last_info = std::time::Instant::now();
             let mut log = SyncLog::default();
+            // A block the daemon announces ends the wait at once; a live
+            // stream lets a synced wallet poll every thirty seconds.
+            let watch = TipWatch::start();
+            let mut woke = false;
             while !thread_stop.load(Ordering::SeqCst) {
-                let wait = {
+                let (wait, seen) = {
                     let mut open = lock(&wallet);
-                    if last_info.elapsed() >= INFO_REFRESH_INTERVAL {
+                    open.follow_daemon(&watch);
+                    if woke || last_info.elapsed() >= INFO_REFRESH_INTERVAL {
                         last_info = std::time::Instant::now();
                         open.refresh_info();
                     }
+                    let seen = watch.events();
                     let round = open.sync_round();
                     log.record(&round, &open);
-                    round.wait
+                    (watch.pace(&round.step, round.wait), seen)
                 };
                 // A back-off after a `429` is twenty seconds, and `exit` must
-                // not sit it out.
-                let deadline = std::time::Instant::now() + wait.max(Duration::from_millis(10));
-                while !thread_stop.load(Ordering::SeqCst) {
-                    let left = deadline.saturating_duration_since(std::time::Instant::now());
-                    if left.is_zero() {
-                        break;
-                    }
-                    std::thread::sleep(left.min(Duration::from_millis(100)));
-                }
+                // not sit it out: the wait also ends on the stop flag.
+                woke = watch.wait(wait.max(Duration::from_millis(10)), seen, &thread_stop);
             }
             // `WalletSynchronizer::stop` (`:813`).
             crate::logging::log(Level::Debug, format_args!("Stopping sync process"));

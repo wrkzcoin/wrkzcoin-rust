@@ -32,6 +32,7 @@ use super::view::Fingerprint;
 use super::{dispatch, ApiState, SyncLog, INFO_REFRESH_INTERVAL};
 use crate::listen::{Handler, IpcConfig, ListenConfig, Listener, Peer};
 use crate::sync::SyncStep;
+use crate::tip_watch::TipWatch;
 
 /// How the listeners behave. The defaults match the daemon's.
 #[derive(Clone, Debug)]
@@ -175,6 +176,10 @@ const HEIGHT_ONLY_PUBLISH_INTERVAL: Duration = Duration::from_secs(1);
 /// one step. What the step changed is published before the wallet is let go,
 /// so the read-only routes, which never take it, see it straight away.
 ///
+/// The wait between rounds ends early when the daemon's event stream reports
+/// a block or a pool change ([`TipWatch`]); while that stream is live, a
+/// synced wallet polls every thirty seconds instead of every two.
+///
 /// Publishing copies the whole container, and a catching-up sync applies a
 /// chunk every few milliseconds. A step that only moved the heights is
 /// therefore published at most once a [`HEIGHT_ONLY_PUBLISH_INTERVAL`]; a
@@ -186,6 +191,9 @@ fn sync_loop(state: &Arc<ApiState>, stopping: &AtomicBool) {
     // What this loop last published, and when; `None` publishes on the next step.
     let mut published: Option<Fingerprint> = None;
     let mut last_publish = std::time::Instant::now();
+    let watch = TipWatch::start();
+    let mut seen = watch.events();
+    let mut woke = false;
 
     while !stopping.load(Ordering::SeqCst) {
         let wait = {
@@ -197,13 +205,19 @@ fn sync_loop(state: &Arc<ApiState>, stopping: &AtomicBool) {
                 None => {
                     log = SyncLog::default();
                     published = None;
+                    watch.follow(None);
                     Duration::from_millis(250)
                 }
                 Some(open) => {
-                    if last_info.elapsed() >= INFO_REFRESH_INTERVAL {
+                    open.follow_daemon(&watch);
+                    // A block just announced moves the network height too.
+                    if woke || last_info.elapsed() >= INFO_REFRESH_INTERVAL {
                         last_info = std::time::Instant::now();
                         open.refresh_info();
                     }
+                    // Counted before the step, so an event during it brings
+                    // the next round straight away.
+                    seen = watch.events();
                     let round = open.sync_round();
                     log.record(&round, open);
                     state.announce_sync_step(open);
@@ -219,29 +233,12 @@ fn sync_loop(state: &Arc<ApiState>, stopping: &AtomicBool) {
                         published = Some(now);
                         last_publish = std::time::Instant::now();
                     }
-                    round.wait
+                    watch.pace(&round.step, round.wait)
                 }
             }
         };
 
         // Never spin: a zero wait still yields, so a request can take the lock.
-        sleep_unless_stopping(wait.max(Duration::from_millis(10)), stopping);
-    }
-}
-
-/// Sleep for `wait`, waking early when the server is told to stop, so a
-/// twenty-second back-off after a `429` does not hold up a shutdown.
-pub(crate) fn sleep_unless_stopping(wait: Duration, stopping: &AtomicBool) {
-    let slice = Duration::from_millis(100);
-    let deadline = std::time::Instant::now() + wait;
-    loop {
-        if stopping.load(Ordering::SeqCst) {
-            return;
-        }
-        let left = deadline.saturating_duration_since(std::time::Instant::now());
-        if left.is_zero() {
-            return;
-        }
-        std::thread::sleep(left.min(slice));
+        woke = watch.wait(wait.max(Duration::from_millis(10)), seen, stopping);
     }
 }

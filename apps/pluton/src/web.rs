@@ -216,16 +216,43 @@ pub fn worker_command(command_json: &str) -> String {
     })
 }
 
-/// One round of syncing; returns `{"events": [...], "waitMs": n}`.
+/// One round of syncing; returns `{"events": [...], "waitMs": n,
+/// "streamUrl": "wss://…/ws" | null}`. `stream_live` is whether the worker's
+/// WebSocket on the node's event stream is up and talking (`worker.js`
+/// follows `streamUrl`; a browser has no socket of its own to give the wallet
+/// core).
 #[wasm_bindgen]
-pub fn worker_tick() -> String {
+pub fn worker_tick(stream_live: bool) -> String {
     SERVICE.with(|cell| match cell.borrow_mut().as_mut() {
         Some(service) => {
+            service.set_stream_live(stream_live);
             let (events, wait) = service.tick();
-            serde_json::json!({ "events": events, "waitMs": wait.as_millis() as u64 }).to_string()
+            let stream = service.node_url_if_open().and_then(stream_url);
+            serde_json::json!({ "events": events, "waitMs": wait.as_millis() as u64, "streamUrl": stream })
+                .to_string()
         }
-        None => serde_json::json!({ "events": [], "waitMs": 250 }).to_string(),
+        None => serde_json::json!({ "events": [], "waitMs": 250, "streamUrl": null }).to_string(),
     })
+}
+
+/// The node announced a block or a pool change: `/info` on the next tick.
+#[wasm_bindgen]
+pub fn worker_poke() {
+    SERVICE.with(|cell| {
+        if let Some(service) = cell.borrow_mut().as_mut() {
+            service.poke();
+        }
+    });
+}
+
+/// `http://host:port` → `ws://host:port/ws`, `https://…` → `wss://…/ws`.
+fn stream_url(node: &str) -> Option<String> {
+    let node = node.trim().trim_end_matches('/');
+    if let Some(rest) = node.strip_prefix("https://") {
+        Some(format!("wss://{rest}/ws"))
+    } else {
+        node.strip_prefix("http://").map(|rest| format!("ws://{rest}/ws"))
+    }
 }
 
 fn events_json(events: &[Event]) -> String {

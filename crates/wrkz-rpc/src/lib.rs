@@ -31,6 +31,8 @@
 //!   daemon, and the console they read while they wait for one.
 //! - [`readline`] — the line editor, with history, that the daemon console,
 //!   `wrkz-node attach` and the wallet's command prompt read through.
+//! - [`ws`] — `GET /ws`, the chain and pool events as a WebSocket stream
+//!   (`--enable-websocket`; this port's own, the C++ has none).
 //!
 //! # Field order
 //!
@@ -234,6 +236,7 @@ pub mod readline;
 pub mod server;
 pub mod signal;
 pub mod sync_cache;
+pub mod ws;
 
 pub use api::{ApiError, NodeApi};
 pub use json::Json;

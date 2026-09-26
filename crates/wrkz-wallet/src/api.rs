@@ -485,6 +485,12 @@ impl OpenWallet {
         (lite_start, lost as u64)
     }
 
+    /// Point `watch` at this wallet's daemon, so a block wakes the sync loop
+    /// ([`crate::tip_watch`]). The same daemon again costs a comparison.
+    pub fn follow_daemon(&self, watch: &crate::tip_watch::TipWatch) {
+        watch.follow_host(&self.daemon_host, self.daemon_port, self.daemon_ssl);
+    }
+
     /// Fold a fresh `/info` into the cached peer count and hashrate, the way
     /// `Nigel::getDaemonInfo` does (`Nigel.cpp:885`).
     pub fn refresh_info(&mut self) {

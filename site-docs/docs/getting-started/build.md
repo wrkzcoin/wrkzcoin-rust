@@ -50,6 +50,9 @@ cargo build --release -p wrkz-wallet --bins
 cargo build --release -p wrkz-service --bin wrkz-service
 cargo build --release -p wrkz-txpow-server --bin wrkz-txpow-server
 
+# A private test network (see Tools, Simnet)
+cargo build --release -p wrkz-simnet --bin wrkz-simnet
+
 # The diagnostics that need no database
 cargo build --release -p wrkz-p2p --bin wrkz-p2p-probe
 cargo build --release -p wrkz-rpc --bin wrkz-rpc-diff

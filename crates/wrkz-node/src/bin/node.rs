@@ -125,6 +125,13 @@ wrkz-node attach SOCKET      a console for a daemon already running here, over
                              minimum free bytes required before the regular
                              auto-prune schedule; below it a prune is forced
                              (default 4 GiB)
+  --simnet                   run a private test network, not mainnet: its own
+                             network id (it never peers with mainnet), blocks
+                             need no proof of work and have difficulty 1, no
+                             checkpoints, no seeds, no UPnP, and ports 27855
+                             (P2P), 27856 (RPC) and 27857 (ZMQ) unless given.
+                             Its coins are worthless. Permanent for the
+                             database; see also the wrkz-simnet program
 
   P2P
   --p2p-bind-ip ADDR         listening address (default 0.0.0.0)
@@ -209,6 +216,13 @@ wrkz-node attach SOCKET      a console for a daemon already running here, over
                              port (behind --rpc-access-token when one is set)
   --enable-health            serve GET /health on the RPC port: 200 once
                              synced, 503 before (same token rule)
+  --enable-websocket         serve GET /ws on the RPC port: blocks,
+                             reorganisations and pool changes as a WebSocket
+                             stream, the ZMQ topics and bodies (same token
+                             and rate limit; a browser needs --enable-cors)
+  --ws-max-clients N         WebSocket subscribers at once (default 128)
+  --ws-max-clients-per-ip N  from one address, loopback exempt (default 4;
+                             0 is no per-address cap)
   --decoy-selection MODE     uniform (default; what every C++ node does) or
                              recent: /getrandom_outs favours recent outputs,
                              as real spends do
@@ -328,6 +342,10 @@ struct Args {
     zmq_pub: String,
     /// `--no-zmq`.
     no_zmq: bool,
+    /// `--enable-websocket`.
+    websocket: bool,
+    /// `--ws-max-clients`, `--ws-max-clients-per-ip`.
+    ws: wrkz_rpc::ws::WsConfig,
     /// `--block-notify`, `--reorg-notify`, `--tx-notify`, `--notify-during-sync`.
     hooks: wrkz_node::chain_notifier::HookSpecs,
     add_peers: Vec<String>,
@@ -343,6 +361,8 @@ struct Args {
     auto_compaction: AutoCompaction,
     /// `--threads`: ring signature verification threads.
     validate_threads: usize,
+    /// `--simnet`: a private test network ([`wrkz_chain::Config::simnet`]).
+    simnet: bool,
     /// `--batch-blocks`: the most blocks the store holds back.
     batch_blocks: u32,
     /// `--batch-bytes`, in megabytes.
@@ -477,6 +497,8 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         stratum: StratumConfig::default(),
         zmq_pub: wrkz_node::zmq::DEFAULT_ENDPOINT.to_string(),
         no_zmq: false,
+        websocket: false,
+        ws: wrkz_rpc::ws::WsConfig::default(),
         hooks: Default::default(),
         add_peers: Vec::new(),
         exclusive_nodes: Vec::new(),
@@ -485,6 +507,7 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
         skip_boot_compaction: false,
         auto_compaction: AutoCompaction::default(),
         validate_threads: default_validate_threads(),
+        simnet: false,
         batch_blocks: wrkz_storage::batch::DEFAULT_BATCH_POINTS,
         batch_bytes_mb: (wrkz_storage::batch::DEFAULT_BATCH_BYTES >> 20) as u64,
         level: Level::Info,
@@ -527,6 +550,8 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
     let mut rpc_ipv6: Option<Ipv6Addr> = None;
     let mut rpc_port: u16 = 17856;
     let mut data_dir_seen = false;
+    // What `--simnet` may move to its own defaults: only what was not given.
+    let (mut p2p_port_seen, mut rpc_port_seen, mut zmq_seen) = (false, false, false);
     let mut args = argv.into_iter();
 
     while let Some(arg) = args.next() {
@@ -621,7 +646,8 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
                 a.cfg.bind = value("--p2p-bind-ip")?.parse::<IpAddr>().map_err(|e| format!("--p2p-bind-ip: {e}"))?
             }
             "--p2p-bind-port" | "--p2p-port" => {
-                a.cfg.p2p_port = number("--p2p-bind-port", value("--p2p-bind-port")?)? as u16
+                a.cfg.p2p_port = number("--p2p-bind-port", value("--p2p-bind-port")?)? as u16;
+                p2p_port_seen = true;
             }
             "--p2p-external-port" => {
                 // An `int` in the C++, checked with its message (`Daemon.cpp:522-526`),
@@ -681,7 +707,10 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             }
 
             "--rpc-bind-ip" => rpc_ip = value("--rpc-bind-ip")?,
-            "--rpc-bind-port" => rpc_port = number("--rpc-bind-port", value("--rpc-bind-port")?)? as u16,
+            "--rpc-bind-port" => {
+                rpc_port = number("--rpc-bind-port", value("--rpc-bind-port")?)? as u16;
+                rpc_port_seen = true;
+            }
             "--rpc-bind-ipv6-address" => {
                 let v = value("--rpc-bind-ipv6-address")?;
                 rpc_ipv6 = Some(
@@ -830,8 +859,22 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--dump-config" => a.dump_config = true,
             "--enable-metrics" => a.rpc.metrics = true,
             "--enable-health" => a.rpc.health = true,
-            "--zmq-pub" => a.zmq_pub = value("--zmq-pub")?,
+            "--enable-websocket" => a.websocket = true,
+            "--ws-max-clients" => {
+                a.ws.max_clients = number("--ws-max-clients", value("--ws-max-clients")?)? as usize;
+                if a.ws.max_clients == 0 {
+                    return Err("--ws-max-clients must be at least 1; leave out --enable-websocket instead".to_string());
+                }
+            }
+            "--ws-max-clients-per-ip" => {
+                a.ws.max_clients_per_ip = number("--ws-max-clients-per-ip", value("--ws-max-clients-per-ip")?)? as usize
+            }
+            "--zmq-pub" => {
+                a.zmq_pub = value("--zmq-pub")?;
+                zmq_seen = true;
+            }
             "--no-zmq" => a.no_zmq = true,
+            "--simnet" => a.simnet = true,
             "--block-notify" => a.hooks.block = value("--block-notify")?,
             "--reorg-notify" => a.hooks.reorg = value("--reorg-notify")?,
             "--tx-notify" => a.hooks.tx = value("--tx-notify")?,
@@ -865,6 +908,29 @@ fn parse_args_from(argv: impl IntoIterator<Item = String>) -> Result<Args, Strin
             "--exit-when-synced" => a.cfg.exit_when_synced = true,
 
             other => return Err(format!("unknown argument {other}")),
+        }
+    }
+    if a.simnet {
+        // Nothing of mainnet's reaches a simnet: not its checkpoints, not its
+        // seeds, not its lite snapshots, not its ports.
+        if a.load_checkpoints.is_some() {
+            return Err("--simnet has no checkpoints, so --load-checkpoints cannot be used with it".to_string());
+        }
+        if a.import_lite_snapshot.is_some() {
+            return Err("--simnet cannot import a lite snapshot: every snapshot is of mainnet".to_string());
+        }
+        a.cfg.network_id = wrkz_primitives::constants::SIMNET_NETWORK;
+        a.checkpoints = false;
+        a.cfg.use_default_seeds = false;
+        a.no_upnp = true;
+        if !p2p_port_seen {
+            a.cfg.p2p_port = wrkz_primitives::constants::SIMNET_P2P_DEFAULT_PORT;
+        }
+        if !rpc_port_seen {
+            rpc_port = wrkz_primitives::constants::SIMNET_RPC_DEFAULT_PORT;
+        }
+        if !zmq_seen {
+            a.zmq_pub = wrkz_primitives::constants::SIMNET_ZMQ_DEFAULT_ENDPOINT.to_string();
         }
     }
     a.rpc.bind = format!("{rpc_ip}:{rpc_port}");
@@ -1016,6 +1082,10 @@ fn dump_config(a: &Args) -> String {
         .set("rpc-workers", a.rpc.workers)
         .set("enable-metrics", a.rpc.metrics)
         .set("enable-health", a.rpc.health)
+        .set("enable-websocket", a.websocket)
+        .set("ws-max-clients", a.ws.max_clients)
+        .set("ws-max-clients-per-ip", a.ws.max_clients_per_ip)
+        .set("simnet", a.simnet)
         .set("decoy-selection", a.decoys.name())
         .set("no-rpc", !a.serve_rpc)
         .set("stratum-bind-ip", a.stratum.bind_ip.to_string())
@@ -1447,7 +1517,14 @@ fn run() -> Result<ExitCode, String> {
         // A performance knob only: the same blocks are accepted and a
         // rejection names the same rule at every value.
         validate_threads: args.validate_threads,
+        simnet: args.simnet,
     };
+    if args.simnet {
+        log_warn!(
+            "SIMNET: a private test network, not mainnet. Blocks need no proof of work and its coins are \
+             worthless; it never connects to a mainnet node."
+        );
+    }
     log_info!(
         "ring signatures verified on up to {} threads; chain state committed per downloaded batch \
          (at most {} blocks or {} MB held back)",
@@ -1725,9 +1802,18 @@ fn serve<S: KvStore + Send + Sync + 'static>(
             log_warn!("No usable notification hook configured. Continuing without notifications.");
         }
     }
+    // `--enable-websocket`: made here, before `Events`, so it hears the first
+    // block; the RPC server takes connections over to it once it is up.
+    let ws_hub = (args.websocket && args.serve_rpc).then(|| wrkz_rpc::ws::WsHub::new(args.ws.clone()));
+    if args.websocket && !args.serve_rpc {
+        log_warn!("--enable-websocket needs the RPC server; ignored with --no-rpc");
+    }
     let mut listeners: Vec<Arc<dyn EventListener>> = zmq.iter().map(ZmqPublisher::listener).collect();
     if let Some(notifier) = &hooks {
         listeners.push(Arc::clone(notifier) as Arc<dyn EventListener>);
+    }
+    if let Some(hub) = &ws_hub {
+        listeners.push(hub.listener());
     }
     let events = Events::new(listeners);
     let mempool = SharedMempool::new(Arc::clone(&pool), Arc::clone(&chain)).with_events(events.clone());
@@ -1787,9 +1873,19 @@ fn serve<S: KvStore + Send + Sync + 'static>(
     }
     let mut rpc = None;
     if args.serve_rpc {
-        let server = server::start(Arc::clone(&rpc_node) as Arc<dyn wrkz_rpc::NodeApi>, args.rpc.clone())
-            .map_err(|e| format!("rpc listener on {}: {e}. Another process may be using it.", args.rpc.bind))?;
+        let server =
+            server::start_with(Arc::clone(&rpc_node) as Arc<dyn wrkz_rpc::NodeApi>, args.rpc.clone(), ws_hub.clone())
+                .map_err(|e| format!("rpc listener on {}: {e}. Another process may be using it.", args.rpc.bind))?;
         log_info!("rpc listening on http://{}", server.local_addr());
+        if let Some(hub) = &ws_hub {
+            let config = hub.config();
+            log_info!(
+                "websocket events on ws://{}/ws (at most {} subscribers, {} per address)",
+                server.local_addr(),
+                config.max_clients,
+                config.max_clients_per_ip
+            );
+        }
         if let Some(addr6) = server.local_addr6() {
             log_info!("rpc also listening on http://{addr6} (IPv6 only)");
         }
@@ -1960,7 +2056,9 @@ fn serve<S: KvStore + Send + Sync + 'static>(
             s.seed_nodes_count = node.seed_count() as u64;
             s.observed_height = observed as u64;
             s.blockchain_height = network_height as u64;
-            s.synchronized = node.is_synchronized();
+            // A simnet node on its own is the whole network: synchronized, so
+            // its RPC takes transactions. Mainnet waits for its peers.
+            s.synchronized = node.is_synchronized() || (args.simnet && node.peer_count() == 0);
             s.prune_capability_active =
                 wrkz_node::sync::prune_capability_fork_active(u64::from(height), u64::from(network_height));
         }
@@ -2328,6 +2426,52 @@ mod tests {
         assert_eq!(a.ignored.len(), 2, "accepted, ignored, and said so at start-up");
         let explorer = parse(&["--data-dir", "d", "--daemon-mode", "explorer"]);
         assert_eq!(explorer.rpc.mode, RpcMode::Explorer);
+    }
+
+    #[test]
+    fn simnet_moves_what_was_not_given_and_refuses_mainnet_inputs() {
+        use wrkz_primitives::constants::{SIMNET_NETWORK, SIMNET_ZMQ_DEFAULT_ENDPOINT};
+        let a = parse(&["--data-dir", "d", "--simnet"]);
+        assert!(a.simnet);
+        assert_eq!(a.cfg.network_id, SIMNET_NETWORK);
+        assert_eq!((a.cfg.p2p_port, a.rpc.bind.as_str()), (27855, "127.0.0.1:27856"));
+        assert_eq!(a.zmq_pub, SIMNET_ZMQ_DEFAULT_ENDPOINT);
+        assert!(!a.checkpoints && !a.cfg.use_default_seeds && a.no_upnp);
+
+        // What was given stays.
+        let given = parse(&["--data-dir", "d", "--simnet", "--p2p-bind-port", "1", "--rpc-bind-port", "2"]);
+        assert_eq!((given.cfg.p2p_port, given.rpc.bind.as_str()), (1, "127.0.0.1:2"));
+
+        // Mainnet is untouched without the flag.
+        let mainnet = parse(&["--data-dir", "d"]);
+        assert_eq!(mainnet.cfg.network_id, wrkz_primitives::constants::CRYPTONOTE_NETWORK);
+        assert!(!mainnet.simnet && mainnet.checkpoints && mainnet.cfg.use_default_seeds);
+
+        let refused = |args: &[&str]| parse_args_from(args.iter().map(|s| s.to_string())).err().expect("refused");
+        assert!(refused(&["--data-dir", "d", "--simnet", "--load-checkpoints", "default"]).contains("no checkpoints"));
+        assert!(refused(&["--data-dir", "d", "--simnet", "--import-lite-snapshot", "f"]).contains("lite snapshot"));
+
+        // A dump of a simnet reads back as the same simnet.
+        let dumped = dump_config(&a);
+        let file = wrkz_node::config_file::from_text(&dumped).expect("our own dump reads");
+        assert!(file.notes.is_empty(), "{:?}", file.notes);
+        assert_eq!(dump_config(&parse_args_from(file.args).expect("and parses")), dumped);
+    }
+
+    #[test]
+    fn websocket_is_off_until_asked_for() {
+        let a = parse(&["--data-dir", "d"]);
+        assert!(!a.websocket);
+        assert_eq!(a.ws, wrkz_rpc::ws::WsConfig::default());
+        let on =
+            parse(&["--data-dir", "d", "--enable-websocket", "--ws-max-clients", "9", "--ws-max-clients-per-ip", "0"]);
+        assert!(on.websocket);
+        assert_eq!((on.ws.max_clients, on.ws.max_clients_per_ip), (9, 0));
+        let zero = parse_args_from(["--data-dir", "d", "--ws-max-clients", "0"].map(String::from)).err().unwrap();
+        assert!(zero.contains("at least 1"), "{zero}");
+        let dumped = dump_config(&on);
+        let file = wrkz_node::config_file::from_text(&dumped).expect("our own dump reads");
+        assert_eq!(dump_config(&parse_args_from(file.args).expect("and parses")), dumped);
     }
 
     #[test]

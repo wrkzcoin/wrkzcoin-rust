@@ -35,6 +35,8 @@ hex = { workspace = true }
 # the C++ does through cpp-httplib when it is built with zlib. The default
 # backend is miniz_oxide, pure Rust, so this needs no C library.
 flate2 = { workspace = true }
+# `GET /ws` (`src/ws.rs`): the WebSocket framing and handshake, std only.
+wrkz-ws = { workspace = true }
 zstd = { workspace = true, optional = true }
 
 # The IPC socket (`src/ipc.rs`): the process umask around the bind and the

@@ -78,6 +78,14 @@ Both go through the same access token and rate limit as every route, so a scrape
 curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:17856/metrics
 ```
 
+### `/ws`
+
+`GET /ws` (`--enable-websocket`) upgrades to a WebSocket that streams the
+chain and pool events of the ZMQ socket, the same topics and the same JSON,
+behind the same access token and rate limit. The wallets here follow it so a
+synced wallet is woken by a block instead of polling. See
+[WebSocket events](../node/websocket.md).
+
 ## Differences from the C++
 
 Each of these is deliberate, and each is either off by default or changes nothing a correct client relies on.
@@ -85,6 +93,7 @@ Each of these is deliberate, and each is either off by default or changes nothin
 ### Daemon RPC
 
 - **`/metrics` and `/health`** are this port's own (above), off by default.
+- **`/ws`**, the WebSocket event stream, is this port's own too (above), off by default.
 - **`--rpc-max-connections-per-ip`** (8 open connections per address, then 429) and **`--rpc-workers`** (a fixed pool of 16, then 503) are this port's own bounds on the server; the C++ has neither option. Loopback and `--rpc-trust-proxy` are exempt from the first; raise it for an explorer back end on another host.
 - **The access token is checked before the body is parsed** on `/json_rpc`; the C++ parses first. Without the token every body is a 401, rather than some being a parse error.
 - **`/getrandom_outs` is bounded**: `outs_count` at most 100, `amounts` at most 10,000 entries and 100,000 decoys in all; past any of them is a 400 in the shape of a bad parameter. The C++ narrows `outs_count` to 16 bits (`src/rpc/RpcServer.cpp:1171`) and looks up whatever it was asked for. Wallets ask for at most eight per input.

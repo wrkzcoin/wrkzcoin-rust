@@ -85,6 +85,10 @@ Names follow the C++ `Wrkzd`'s where the C++ has one.
 | `--enable-metrics` | off | serve `GET /metrics` in the Prometheus text format on the RPC port, behind `--rpc-access-token` when one is set. Off, that path is a 404 |
 | `--decoy-selection MODE` | `uniform` | how `/getrandom_outs` picks ring decoys. `uniform` is the C++'s pick over every unlocked output. `recent` draws each decoy's age from Monero's fitted gamma (ln of the age in seconds ~ Gamma(19.28, 1/1.61), median about 36 hours) so decoys look like real spends, which are mostly recent; any it cannot fill are picked uniformly. **Leave it at `uniform` until the C++ node and the network switch together**: a node handing out a different distribution from its peers makes its own users' rings recognisable |
 | `--enable-health` | off | serve `GET /health` on the RPC port: **200** once synced, **503** while syncing, with `status`, `synced`, `height`, `network_height` and `peers` as JSON. Same token rule; off, a 404 |
+| `--enable-websocket` | off | serve `GET /ws` on the RPC port: the chain and pool events as a WebSocket stream ([WebSocket events](websocket.md)). Same token rule and rate limit; off, a 404 |
+| `--ws-max-clients N` | 128 | WebSocket subscribers at once |
+| `--ws-max-clients-per-ip N` | 4 | WebSocket subscribers from one address, loopback exempt; `0` is no cap |
+| `--simnet` | off | run a private test network instead of mainnet: its own network id, no proof of work, difficulty 1, no checkpoints, seeds or UPnP, ports 27855/27856/27857 unless given. Permanent for the database ([Simnet](../tools/simnet.md)) |
 | `--stratum-bind-port PORT` | `0` | serve the built-in stratum server on `PORT`, so a stock miner mines straight to this node ([Mining](mining.md)). `0` leaves it off |
 | `--stratum-bind-ip ADDR` | `127.0.0.1` | the stratum server's listening address |
 | `--stratum-share-difficulty N` | `0` | difficulty miners are given. `0` is the network difficulty, so a miner reports only blocks; a lower value makes it report progress too |
@@ -157,6 +161,7 @@ command line, file, command line again. A list (`add-peer`, `seed-node`,
 - This port's own options that `--dump-config` writes — `lite`, `lite-height`,
   `no-listen`, `no-upnp`, `no-default-seeds`, `no-rpc`, `rpc-workers`,
   `rpc-max-connections-per-ip`, `enable-metrics`, `enable-health`,
+  `enable-websocket`, `ws-max-clients`, `ws-max-clients-per-ip`, `simnet`,
   `decoy-selection`, `threads`, `batch-blocks`, `batch-bytes` and `wal` — are
   read back the same way.
 - The one-off actions — `resync`, `rewind-to-height`, `import-blockchain`,

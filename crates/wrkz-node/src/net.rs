@@ -38,7 +38,7 @@ use std::time::Duration;
 use wrkz_p2p::conn::{self, Connection};
 use wrkz_p2p::levin::{self, Header, OversizedFrame};
 use wrkz_p2p::msg::{self, BasicNodeData, CoreSyncData, HandshakeResponse};
-use wrkz_primitives::constants::{CRYPTONOTE_NETWORK, P2P_CONNECTION_MAX_WRITE_BUFFER_SIZE, P2P_MINIMUM_VERSION};
+use wrkz_primitives::constants::{P2P_CONNECTION_MAX_WRITE_BUFFER_SIZE, P2P_MINIMUM_VERSION};
 
 use crate::peers::{net_group, BanList, NetGroup};
 use crate::sync::ConnId;
@@ -453,7 +453,8 @@ pub fn spawn_outbound(
             Ok(v) => v,
             Err(e) => return fail(&events, format!("handshake response: {e}")),
         };
-        if hs.node_data.network_id != CRYPTONOTE_NETWORK {
+        // Ours is what we sent: mainnet's, or the simnet's.
+        if hs.node_data.network_id != node_data.network_id {
             return fail(&events, "wrong network id".to_string());
         }
         if hs.node_data.version < P2P_MINIMUM_VERSION {

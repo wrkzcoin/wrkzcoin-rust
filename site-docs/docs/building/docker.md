@@ -8,7 +8,7 @@ For the C++ node's images and packaging scripts, see [Other tools](https://docs.
 
 [`Dockerfile`](https://github.com/wrkzcoin/wrkzcoin-rust/blob/development/Dockerfile) builds the node, the import tool and the wallets with the RocksDB engine (the build stage has the libclang that needs), with thin LTO as a release is built, and copies them onto `debian:bookworm-slim`:
 
-- programs in `/usr/local/bin`: `wrkz-node`, `wrkz-replay`, `wrkz-wallet`, `wrkz-wallet-api`, `wrkz-wallet-sync` and `wrkz-wallet-send`;
+- programs in `/usr/local/bin`: `wrkz-node`, `wrkz-replay`, `wrkz-wallet`, `wrkz-wallet-api`, `wrkz-wallet-sync`, `wrkz-wallet-send` and `wrkz-simnet`;
 - they run as the unprivileged user `wrkz` (uid 10001), whose home is `/data`;
 - the chain state lives in the volume `/data`;
 - ports 17855 (P2P) and 17856 (RPC) are exposed;
@@ -57,6 +57,16 @@ docker run --rm -v wrkz-data:/data -v /path/to/copy/of/DB:/cpp:ro \
 then start the node as above. [Replay](../tools/replay.md) explains `--store-raw` and the rest.
 
 The other programs in the image run the same way, with `--entrypoint`.
+
+### A simnet
+
+[`compose.simnet.yml`](https://github.com/wrkzcoin/wrkzcoin-rust/blob/development/compose.simnet.yml) runs a private test network from the same image: three `--simnet` nodes in a line, each with its RPC and `/ws` on loopback, and `wrkz-simnet mine` making a block every ten seconds.
+
+```sh
+docker compose -f compose.simnet.yml up -d
+```
+
+[Simnet](../tools/simnet.md) explains what a simnet is and the other ways to run one.
 
 ## The cross-build image
 

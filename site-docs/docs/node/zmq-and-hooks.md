@@ -8,6 +8,10 @@ or POST to a URL.
 The C++ counterpart is [Notification Hooks](https://docs.wrkz.work/guides/notify-hooks/) on
 docs.wrkz.work.
 
+The same events are also available as a WebSocket stream on the RPC port, for
+browsers and anything behind a reverse proxy: see
+[WebSocket events](websocket.md).
+
 ## ZMQ
 
 Like `Wrkzd` (`src/daemon/ZmqPublisher.cpp`), the node publishes what happens to the chain and the pool on a

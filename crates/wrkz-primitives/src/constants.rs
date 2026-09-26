@@ -26,6 +26,19 @@ pub const SEED_NODES: &[&str] = &["node-fin.wrkz.work:17855", "node-wrkz.btipz.c
 pub const DNS_SEED_NODES: &[&str] = &["seeds.wrkz.work"];
 pub const P2P_NET_DATA_FILENAME: &str = "p2pstate.wrkz.bin";
 
+// Simnet: a private test network of this port's own (`wrkz-node --simnet`,
+// the `wrkz-simnet` crate). It starts from the mainnet genesis block and runs
+// the mainnet rules of each height, except that blocks carry no proof of work
+// and every block's difficulty is 1 (`wrkz_chain::Config::simnet`). Its own
+// network id keeps its nodes and mainnet's from ever completing a handshake.
+/// The simnet's `network_id`: sixteen bytes no real network uses.
+pub const SIMNET_NETWORK: [u8; 16] = *b"wrkz simnet 0001";
+pub const SIMNET_P2P_DEFAULT_PORT: u16 = 27855;
+pub const SIMNET_RPC_DEFAULT_PORT: u16 = 27856;
+pub const SIMNET_ZMQ_DEFAULT_ENDPOINT: &str = "tcp://127.0.0.1:27857";
+/// Every simnet block's difficulty.
+pub const SIMNET_DIFFICULTY: u64 = 1;
+
 // ---- supply and reward ------------------------------------------------------
 pub const MONEY_SUPPLY: u64 = 50_000_000_000_000;
 pub const EMISSION_SPEED_FACTOR: u32 = 22;

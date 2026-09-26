@@ -13,6 +13,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use wrkz_wallet::http::UreqTransport;
+use wrkz_wallet::tip_watch::TipWatch;
 
 use crate::protocol::{Command, Event, WalletHandle};
 use crate::service::{Service, Storage};
@@ -92,10 +93,17 @@ impl Storage for FileStorage {
     }
 }
 
+/// What reaches the wallet thread: a command from the window, or the node's
+/// event stream saying a block or a pool change arrived.
+enum Inbox {
+    Command(Command),
+    Wake,
+}
+
 /// The running wallet thread. Dropping it asks the wallet to stop and waits
 /// for it, so a wallet is always saved before the process ends.
 pub struct WalletThread {
-    commands: Sender<Command>,
+    commands: Sender<Inbox>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -106,7 +114,8 @@ impl WalletThread {
     where
         F: Fn(Event) + Send + 'static,
     {
-        let (commands, inbox) = channel::<Command>();
+        let (commands, inbox) = channel::<Inbox>();
+        let doorbell = commands.clone();
         let thread = std::thread::Builder::new()
             .name("wallet".into())
             .spawn(move || {
@@ -118,10 +127,22 @@ impl WalletThread {
                     FileStorage::new(dir),
                     false,
                 );
+                // The node's `GET /ws`: a block ends the wait at once, and a
+                // live stream lets a synced wallet poll less often.
+                let watch = TipWatch::start();
+                watch.set_notify(Box::new(move || {
+                    let _ = doorbell.send(Inbox::Wake);
+                }));
                 let mut wait = Duration::from_millis(250);
                 loop {
+                    watch.follow(service.node_url_if_open());
+                    service.set_stream_live(watch.is_live());
                     match inbox.recv_timeout(wait) {
-                        Ok(command) => {
+                        Ok(Inbox::Wake) => {
+                            service.poke();
+                            wait = Duration::from_millis(1);
+                        }
+                        Ok(Inbox::Command(command)) => {
                             let stopping = matches!(command, Command::Shutdown);
                             for event in service.handle(command) {
                                 on_event(event);
@@ -151,7 +172,7 @@ impl WalletThread {
 
     /// Ask the wallet to do something. Fails only once it has stopped.
     pub fn send(&self, command: Command) {
-        let _ = self.commands.send(command);
+        let _ = self.commands.send(Inbox::Command(command));
     }
 }
 
@@ -163,7 +184,7 @@ impl WalletHandle for WalletThread {
 
 impl Drop for WalletThread {
     fn drop(&mut self) {
-        let _ = self.commands.send(Command::Shutdown);
+        let _ = self.commands.send(Inbox::Command(Command::Shutdown));
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }

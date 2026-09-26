@@ -1,0 +1,32 @@
+[package]
+name = "wrkz-simnet"
+description = "WrkzCoin simnet: whole nodes — chain, pool, P2P engine, RPC and its WebSocket stream — in one process, joined by links a test can cut and heal, with a miner that needs no proof of work. For tests, and for a local network to point wallets at."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+wrkz-chain = { workspace = true }
+wrkz-mempool = { workspace = true }
+wrkz-node = { workspace = true }
+wrkz-pow = { workspace = true }
+wrkz-primitives = { workspace = true }
+wrkz-rpc = { workspace = true }
+wrkz-storage = { workspace = true }
+# `wrkz-simnet mine`: `getblocktemplate` and `submitblock` against a
+# `wrkz-node --simnet` in another process, through the wallet's daemon client.
+wrkz-wallet = { workspace = true, default-features = false, features = ["native"] }
+hex = { workspace = true }
+
+[dev-dependencies]
+wrkz-ws = { workspace = true }
+
+[[bin]]
+name = "wrkz-simnet"
+path = "src/main.rs"
+
+[lints]
+workspace = true

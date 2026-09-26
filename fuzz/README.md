@@ -23,6 +23,7 @@ fixed.
 | `db_records` | `wrkz_storage::records`, `::codec`, `wrkz_chain::records` | a C++ or port database | total; no allocation sized from a declared length |
 | `peer_state` | `PeerManager::decode` (`p2pstate.wrkz.bin`) | the data directory | total; the loaded lists stay inside the peerlist limits |
 | `lite_snapshot` | `snapshot::container::Reader` and `snapshot::records::decode` | a downloaded `.litesnap` | total and bounded; truncated, reordered and over-declared frames are errors |
+| `ws_frame` | `wrkz_ws::frame` (both roles) and `handshake::read_response_head` | a `GET /ws` subscriber, or the daemon a wallet follows | total and bounded; the buffered and the stream frame reader agree on every input |
 
 Not fuzzed, and deliberately: the encrypted wallet container
 (`decode_wallet_file`). Every input past its magic identifier costs 500,000

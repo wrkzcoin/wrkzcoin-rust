@@ -55,6 +55,12 @@ pub trait PoolChain: ChainAccess {
     /// re-submitted transaction is still refused, by the key-image check, as
     /// `INPUT_KEYIMAGE_ALREADY_SPENT` rather than as "already in the
     /// blockchain".
+    /// A difficulty every block has, whatever the window says: the simnet's
+    /// ([`wrkz_chain::Config::simnet`]). `None`, the default, is the rule.
+    fn fixed_difficulty(&self) -> Option<u64> {
+        None
+    }
+
     fn transaction_in_chain(&self, _hash: &Hash) -> wrkz_chain::Result<bool> {
         Ok(false)
     }
@@ -90,6 +96,10 @@ impl<S: KvStore> PoolChain for ChainState<S> {
 
     fn transaction_in_chain(&self, hash: &Hash) -> wrkz_chain::Result<bool> {
         self.has_transaction(hash)
+    }
+
+    fn fixed_difficulty(&self) -> Option<u64> {
+        self.is_simnet().then_some(wrkz_primitives::constants::SIMNET_DIFFICULTY)
     }
 }
 
@@ -272,6 +282,9 @@ pub fn minor_version_for(major_version: u8) -> u8 {
 /// `None` is the C++ `DIFFICULTY_OVERHEAD` case, which
 /// `Core::getBlockTemplate` turns into "difficulty is zero".
 pub fn next_block_difficulty<C: PoolChain + ?Sized>(chain: &C, parent_index: u64) -> Result<Option<u64>, ContextError> {
+    if let Some(fixed) = chain.fixed_difficulty() {
+        return Ok(Some(fixed));
+    }
     let Ok(parent) = u32::try_from(parent_index) else { return Ok(None) };
     let mut window = Vec::new();
     for i in wrkz_chain::difficulty_window_indexes(parent) {

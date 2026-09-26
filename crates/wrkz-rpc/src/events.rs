@@ -202,6 +202,48 @@ pub fn block_events(applied: &AppliedBlock<'_>, hash_at: impl Fn(u32) -> Option<
     events
 }
 
+/// The topics an event is published under, each with its compact JSON body,
+/// byte for byte what the C++ ZMQ publisher sends
+/// (`ZmqPublisher::publishMessage`, `ZmqPublisher.cpp:168-226`). `height` is
+/// the block's index.
+///
+/// The ZMQ socket (`wrkz_node::zmq`) and the WebSocket stream
+/// ([`crate::ws`]) both send exactly these pairs, so a subscriber reads the
+/// same JSON whichever transport it chose.
+pub fn topic_messages(event: &ChainEvent) -> Vec<(&'static str, String)> {
+    match event {
+        ChainEvent::BlockAdded { index, hash, transaction_hashes } => vec![
+            ("hashblock", format!("{{\"height\":{index},\"hash\":\"{}\"}}", hex::encode(hash))),
+            (
+                "chain_main",
+                format!(
+                    "{{\"height\":{index},\"hash\":\"{}\",\"transaction_hashes\":{}}}",
+                    hex::encode(hash),
+                    hash_array(transaction_hashes)
+                ),
+            ),
+        ],
+        ChainEvent::AlternativeBlockAdded { index, hash } => {
+            vec![("hashblock_alt", format!("{{\"height\":{index},\"hash\":\"{}\"}}", hex::encode(hash)))]
+        }
+        ChainEvent::ChainSwitched { common_root_index, hashes } => vec![(
+            "chainswitch",
+            format!("{{\"common_root_height\":{common_root_index},\"hashes\":{}}}", hash_array(hashes)),
+        )],
+        ChainEvent::PoolAdded { hash } => {
+            vec![("txpool_add", format!("{{\"hashes\":[\"{}\"]}}", hex::encode(hash)))]
+        }
+        ChainEvent::PoolRemoved { hashes, reason } => {
+            vec![("txpool_del", format!("{{\"hashes\":{},\"reason\":\"{}\"}}", hash_array(hashes), reason.as_str()))]
+        }
+    }
+}
+
+fn hash_array(hashes: &[Hash]) -> String {
+    let quoted: Vec<String> = hashes.iter().map(|h| format!("\"{}\"", hex::encode(h))).collect();
+    format!("[{}]", quoted.join(","))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

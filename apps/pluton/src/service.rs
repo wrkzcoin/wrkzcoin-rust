@@ -40,6 +40,10 @@ const INFO_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Between polls once the wallet is synced.
 const SYNCED_INTERVAL: Duration = Duration::from_secs(10);
+/// Between polls once the wallet is synced and the node's event stream is
+/// live: the stream wakes the wallet for a block, and this only catches a
+/// message that was lost.
+const LIVE_SYNCED_INTERVAL: Duration = Duration::from_secs(30);
 /// How far apart the scanning-rate samples are taken. Short enough that the
 /// figure reacts to a node that stopped answering, long enough that it is not
 /// measuring one download burst.
@@ -117,6 +121,9 @@ pub struct Service<T: HttpTransport + Clone, S: Storage> {
     /// `Instant`, which the browser build does not have.
     rate_sample: Option<(u64, u64)>,
     blocks_per_second: f32,
+    /// Whether the platform's watch on the node's event stream (`GET /ws`)
+    /// is live, which lets a synced wallet poll less often.
+    stream_live: bool,
 }
 
 impl<T: HttpTransport + Clone, S: Storage> Service<T, S> {
@@ -139,7 +146,25 @@ impl<T: HttpTransport + Clone, S: Storage> Service<T, S> {
             last_info_ms: 0,
             rate_sample: None,
             blocks_per_second: 0.0,
+            stream_live: false,
         }
+    }
+
+    /// The node whose event stream is worth following: the configured one,
+    /// while a wallet is open and syncing from it.
+    pub fn node_url_if_open(&self) -> Option<&str> {
+        self.open.as_ref().map(|_| self.settings.node_url.as_str())
+    }
+
+    /// Tell the service whether the platform's stream watch is live.
+    pub fn set_stream_live(&mut self, live: bool) {
+        self.stream_live = live;
+    }
+
+    /// The node announced something: ask `/info` on the next tick instead of
+    /// at the usual interval, so the network height moves with the block.
+    pub fn poke(&mut self) {
+        self.last_info_ms = 0;
     }
 
     /// What Settings shows.
@@ -206,6 +231,7 @@ impl<T: HttpTransport + Clone, S: Storage> Service<T, S> {
     /// One round of syncing, and how long to wait before the next.
     pub fn tick(&mut self) -> (Vec<Event>, Duration) {
         let now = platform::now_millis();
+        let synced_interval = if self.stream_live { LIVE_SYNCED_INTERVAL } else { SYNCED_INTERVAL };
         let Some(open) = self.open.as_mut() else {
             return (Vec::new(), Duration::from_millis(250));
         };
@@ -222,7 +248,7 @@ impl<T: HttpTransport + Clone, S: Storage> Service<T, S> {
                 open.dirty = true;
                 (Duration::ZERO, *transactions > 0)
             }
-            SyncStep::Synced { .. } => (SYNCED_INTERVAL, false),
+            SyncStep::Synced { .. } => (synced_interval, false),
             SyncStep::Idle { backoff } => (*backoff, false),
             SyncStep::Failed { error, backoff } => {
                 events.push(notice(format!("The node did not answer: {error}"), NoticeKind::Warning));

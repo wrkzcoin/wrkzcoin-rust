@@ -30,8 +30,9 @@ ENV CARGO_PROFILE_RELEASE_LTO=thin
 RUN cargo build --release --locked --features rocksdb -p wrkz-node --bin wrkz-node \
  && cargo build --release --locked --features rocksdb -p wrkz-chain --bin wrkz-replay \
  && cargo build --release --locked -p wrkz-wallet --bins \
+ && cargo build --release --locked -p wrkz-simnet --bin wrkz-simnet \
  && mkdir /out \
- && for b in wrkz-node wrkz-replay wrkz-wallet wrkz-wallet-api wrkz-wallet-sync wrkz-wallet-send; do \
+ && for b in wrkz-node wrkz-replay wrkz-wallet wrkz-wallet-api wrkz-wallet-sync wrkz-wallet-send wrkz-simnet; do \
         cp "target/release/$b" /out/; \
     done \
  && strip /out/*

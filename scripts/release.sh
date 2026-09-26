@@ -118,9 +118,11 @@ fi
 # README.md tells an operator to check a state someone handed over with the
 # first, and an archive that does not carry it makes that impossible to do.
 # None of the three costs anything at run time.
+# `wrkz-simnet` ships so a private test network is one download away
+# (site-docs/docs/tools/simnet.md).
 bins="wrkz-node wrkz-replay wrkz-verify-state wrkz-db-inspect wrkz-p2p-probe \
 wrkz-rpc-diff wrkz-service wrkz-wallet wrkz-wallet-api wrkz-wallet-sync \
-wrkz-wallet-send wrkz-txpow-server"
+wrkz-wallet-send wrkz-txpow-server wrkz-simnet"
 
 export WRKZ_GIT_COMMIT="$commit"
 # Cross-crate inlining for the binaries that ship, and only for them: the root
@@ -145,6 +147,7 @@ for target in $targets; do
     cross_build "$target" --release --locked -p wrkz-wallet --bins
     cross_build "$target" --release --locked -p wrkz-service --bin wrkz-service
     cross_build "$target" --release --locked -p wrkz-txpow-server --bin wrkz-txpow-server
+    cross_build "$target" --release --locked -p wrkz-simnet --bin wrkz-simnet
 
     name="wrkzcoin-cli-$version-$commit-$(platform "$target")"
     stage="dist/$name"
